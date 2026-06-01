@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { db } from "./firebase";
 import {
   collection,
@@ -11,212 +11,190 @@ import {
   onSnapshot,
   where,
 } from "firebase/firestore";
-
 import {
-  LineChart,
-  Line,
+  AreaChart,
+  Area,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer
+  ResponsiveContainer,
 } from "recharts";
-import { importCSV } from "./importWorkouts";
+// import { importCSV } from "./importWorkouts";
+
+const workoutsRef = collection(db, "workouts");
+
+const USERS = ["ryan", "tuna"];
+const VARIATIONS = ["Incline", "Decline", "Unilateral"];
+const HISTORY_FILTERS = ["All", "Standard", ...VARIATIONS];
+const EQUIPMENT = ["Barbell", "Dumbbell", "Cable", "Machine", "Smith Machine"];
+const TRACKER_SPLITS = ["Upper", "Lower", "Push", "Pull", "Legs", "Core"];
+const TEMPLATE_SPLITS = ["Push", "Pull", "Legs", "Upper", "Lower", "Core"];
+const PRIMARY_SPLITS = ["Push", "Pull", "Legs", "Core"];
+
+const EXERCISE_MAP = {
+  Push: [
+    "Bench Press",
+    "Shoulder Press",
+    "Fly",
+    "Bottom Up Fly",
+    "Lateral Raise",
+    "Tricep Pushdown",
+    "Overhead Tricep Extension",
+  ],
+  Pull: [
+    "Pull Up",
+    "Lat Pulldown",
+    "Lat Pullover",
+    "Row",
+    "T-Bar Row",
+    "Rear Delt Fly",
+    "Bicep Curl",
+    "Hammer Curl",
+  ],
+  Legs: [
+    "Squat",
+    "Hack Squat",
+    "Deadlift",
+    "Romanian Deadlift",
+    "Leg Press",
+    "Hip Thrust",
+    "Leg Curl",
+    "Leg Extension",
+    "Calf Raise",
+    "Seated Calf Raise",
+  ],
+  Upper: [
+    "Bench Press",
+    "Shoulder Press",
+    "Fly",
+    "Bottom Up Fly",
+    "Lateral Raise",
+    "Tricep Pushdown",
+    "Overhead Tricep Extension",
+    "Pull Up",
+    "Lat Pulldown",
+    "Lat Pullover",
+    "Row",
+    "T-Bar Row",
+    "Rear Delt Fly",
+    "Bicep Curl",
+    "Hammer Curl",
+  ],
+  Lower: [
+    "Squat",
+    "Hack Squat",
+    "Deadlift",
+    "Romanian Deadlift",
+    "Leg Press",
+    "Hip Thrust",
+    "Leg Curl",
+    "Leg Extension",
+    "Calf Raise",
+    "Seated Calf Raise",
+  ],
+  Core: [
+    "Cable Crunch",
+    "Hanging Leg Raise",
+    "Captain's Chair",
+    "Ab Crunch Machine",
+    "Plank",
+    "Side Plank",
+    "Pallof Press",
+    "Russian Twist",
+    "Back Extension",
+  ],
+};
+
+const EXERCISE_CATEGORY = Object.entries(EXERCISE_MAP).reduce((acc, [split, exercises]) => {
+  if (PRIMARY_SPLITS.includes(split)) {
+    exercises.forEach((exercise) => {
+      acc[exercise] = split;
+    });
+  }
+
+  return acc;
+}, {});
+
+const ALL_EXERCISES = Array.from(new Set(Object.values(EXERCISE_MAP).flat())).sort();
+
+const titleCaseUser = (user) => user.charAt(0).toUpperCase() + user.slice(1);
+
+const normalizeVariations = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  return String(value)
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+};
+
+const formatDate = (createdAt) =>
+  createdAt?.seconds ? new Date(createdAt.seconds * 1000).toLocaleDateString() : "No date";
+
+const getDateKey = (createdAt) => {
+  if (!createdAt?.seconds) return "";
+  return getLocalDateKey(new Date(createdAt.seconds * 1000));
+};
+
+const getLocalDateKey = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const getSplitForWorkout = (workout) =>
+  EXERCISE_CATEGORY[workout.exercise] || workout.split || "Other";
+
+const CustomTooltip = ({ active, payload }) => {
+  if (!active || !payload?.length) return null;
+
+  const data = payload[0].payload;
+
+  return (
+    <div className="chart-tooltip">
+      <strong>{data.date}</strong>
+      <span>{data.weight} lbs</span>
+      <span>{data.reps}</span>
+      {data.notes && <span>{data.notes}</span>}
+    </div>
+  );
+};
 
 export default function App() {
+  const [activeView, setActiveView] = useState("Tracker");
+  const [user, setUser] = useState("ryan");
+  const [workouts, setWorkouts] = useState([]);
+
   const [split, setSplit] = useState("");
   const [exercise, setExercise] = useState("");
+  const [customExercise, setCustomExercise] = useState("");
   const [equipment, setEquipment] = useState("");
   const [weight, setWeight] = useState("");
   const [variations, setVariations] = useState([]);
-  const [set1, setSet1] = useState("");
-  const [set2, setSet2] = useState("");
-  const [set3, setSet3] = useState("");
-  const [set4, setSet4] = useState("");
-
+  const [sets, setSets] = useState(["", "", "", ""]);
   const [notes, setNotes] = useState("");
 
-  const [workouts, setWorkouts] = useState([]);
-  const [user, setUser] = useState("ryan");
+  const [progressExercise, setProgressExercise] = useState("");
+  const [progressEquipment, setProgressEquipment] = useState("");
+  const [progressVariations, setProgressVariations] = useState([]);
+  const [templateSplit, setTemplateSplit] = useState("Push");
+  const [selectedHistoryVariationFilters, setSelectedHistoryVariationFilters] = useState([]);
   const [collapsed, setCollapsed] = useState({});
-
-  const toggleVariation = (v) => {
-    setVariations((prev) => {
-      const updated = prev.includes(v)
-        ? prev.filter((x) => x !== v)
-        : [...prev, v];
-  
-      fetchLastWorkout(exercise, equipment, updated, user);
-  
-      return updated;
-    });
-  };
-  const [lastWorkout, setLastWorkout] = useState(null);
-  const fetchLastWorkout = (selectedExercise, selectedEquipment, selectedVariations, currentUser) => {
-    const previous = workouts
-      .filter((w) => {
-        const sameUser = w.user === currentUser;
-  
-        const sameExercise = w.exercise === selectedExercise;
-        const sameEquipment = w.equipment === selectedEquipment;
-  
-        const prevVars = w.variations || [];
-        const currVars = selectedVariations || [];
-  
-        const sameVariations =
-          prevVars.length === currVars.length &&
-          prevVars.every((v) => currVars.includes(v));
-  
-        return (
-          sameUser &&
-          sameExercise &&
-          sameEquipment
-        );
-      })
-      .sort((a, b) => {
-        const aTime = a.createdAt?.seconds || 0;
-        const bTime = b.createdAt?.seconds || 0;
-        return bTime - aTime;
-      })[0];
-  
-    if (previous) {
-      setLastWorkout(previous);
-  
-      setWeight(previous.weight || "");
-  
-      setSet1(previous.sets?.[0] || "");
-      setSet2(previous.sets?.[1] || "");
-      setSet3(previous.sets?.[2] || "");
-      setSet4(previous.sets?.[3] || "");
-    }
-  };
-
-  const workoutsRef = collection(db, "workouts");
-
-  const exerciseMap = {
-    Push: [
-      "Bench Press",
-      "Shoulder Press",
-      "Fly",
-      "Bottom Up Fly",
-      "Lateral Raise",
-      "Tricep Pushdown",
-      "Overhead Tricep Extension",
-    ],
-  
-    Pull: [
-      "Pull Up",
-      "Lat Pulldown",
-      "Lat Pullover",
-      "Row",
-      "T-Bar Row",
-      "Rear Delt Fly",
-      "Bicep Curl",
-      "Hammer Curl",
-    ],
-  
-    Legs: [
-      "Squat",
-      "Hack Squat",
-      "Deadlift",
-      "Romanian Deadlift",
-      "Leg Press",
-      "Hip Thrust",
-      "Leg Curl",
-      "Leg Extension",
-      "Calf Raise",
-      "Seated Calf Raise",
-    ],
-  
-    Upper: [
-      "Bench Press",
-      "Shoulder Press",
-      "Fly",
-      "Bottom Up Fly",
-      "Lateral Raise",
-      "Tricep Pushdown",
-      "Overhead Tricep Extension",
-      "Pull Up",
-      "Lat Pulldown",
-      "Lat Pullover",
-      "Row",
-      "T-Bar Row",
-      "Rear Delt Fly",
-      "Bicep Curl",
-      "Hammer Curl",
-    ],
-  
-    Lower: [
-      "Squat",
-      "Hack Squat",
-      "Deadlift",
-      "Romanian Deadlift",
-      "Leg Press",
-      "Hip Thrust",
-      "Leg Curl",
-      "Leg Extension",
-      "Calf Raise",
-      "Seated Calf Raise",
-    ],
-  };
-  const availableExercises = exerciseMap[split] || [];
-
-  const exerciseCategory = {};
-
-  Object.entries(exerciseMap).forEach(([split, exercises]) => {
-    if (["Push", "Pull", "Legs"].includes(split)) {
-      exercises.forEach((ex) => {
-        exerciseCategory[ex] = split;
-      });
-    }
-  });
-
-  const groupedWorkouts = workouts.reduce((groups, workout) => {
-    const key = workout.exercise;
-  
-    if (!groups[key]) {
-      groups[key] = [];
-    }
-  
-    groups[key].push(workout);
-    return groups;
-  }, {});
-
-  const toggleCollapse = (exercise) => {
-    setCollapsed((prev) => ({
-      ...prev,
-      [exercise]: !prev[exercise],
-    }));
-  };
-
-  const groupedHistory = workouts.reduce((acc, workout) => {
-    const split = exerciseCategory[workout.exercise] || "Other";
-  
-    if (!acc[split]) acc[split] = {};
-    if (!acc[split][workout.exercise]) {
-      acc[split][workout.exercise] = [];
-    }
-  
-    acc[split][workout.exercise].push(workout);
-  
-    return acc;
-  }, {});
+  const [confirmDelete, setConfirmDelete] = useState(null);
 
   useEffect(() => {
-    const q = query(
-      workoutsRef,
-      where("user", "==", user),
-      orderBy("createdAt", "desc")
-    );
+    const q = query(workoutsRef, where("user", "==", user), orderBy("createdAt", "desc"));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map((doc) => {
-        const d = doc.data();
-      
+      const data = snapshot.docs.map((workoutDoc) => {
+        const workout = workoutDoc.data();
+
         return {
-          id: doc.id,
-          ...d,
-          variations: Array.isArray(d.variations) ? d.variations : [],
+          id: workoutDoc.id,
+          ...workout,
+          variations: normalizeVariations(workout.variations),
         };
       });
 
@@ -226,347 +204,801 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
-  const addWorkout = async (e) => {
-    e.preventDefault();
+  const availableExercises = EXERCISE_MAP[split] || [];
+  const nextUser = USERS.find((item) => item !== user);
+  const resolvedExercise = exercise === "__custom__" ? customExercise.trim() : exercise;
+  const selectableExercises = useMemo(
+    () =>
+      Array.from(new Set([...ALL_EXERCISES, ...workouts.map((workout) => workout.exercise)]))
+        .filter(Boolean)
+        .sort(),
+    [workouts]
+  );
 
-    const sets = [set1, set2, set3, set4]
-      .filter((s) => s !== "")
-      .map(Number);
+  const userStats = useMemo(() => {
+    const exerciseCounts = workouts.reduce((acc, workout) => {
+      acc[workout.exercise] = (acc[workout.exercise] || 0) + 1;
+      return acc;
+    }, {});
+
+    const favoriteExercise =
+      Object.entries(exerciseCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "None yet";
+
+    return {
+      total: workouts.length,
+      uniqueExercises: Object.keys(exerciseCounts).length,
+      favoriteExercise,
+      lastWorkout: workouts[0],
+    };
+  }, [workouts]);
+
+  const lastWorkout = useMemo(() => {
+    if (!resolvedExercise || !equipment) return null;
+
+    return (
+      workouts.find((workout) => {
+        const workoutVariations = normalizeVariations(workout.variations);
+        const sameVariations =
+          workoutVariations.length === variations.length &&
+          variations.every((variation) => workoutVariations.includes(variation));
+
+        return (
+          workout.exercise === resolvedExercise &&
+          workout.equipment === equipment &&
+          sameVariations
+        );
+      }) || null
+    );
+  }, [equipment, resolvedExercise, variations, workouts]);
+
+  const heatmapDays = useMemo(() => {
+    const countsByDay = workouts.reduce((acc, workout) => {
+      const key = getDateKey(workout.createdAt);
+      if (!key) return acc;
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+
+    return Array.from({ length: 30 }, (_, index) => {
+      const date = new Date();
+      date.setHours(0, 0, 0, 0);
+      date.setDate(date.getDate() - (29 - index));
+      const key = getLocalDateKey(date);
+
+      return {
+        key,
+        label: date.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+        count: countsByDay[key] || 0,
+      };
+    });
+  }, [workouts]);
+
+  const progressEquipmentOptions = useMemo(() => {
+    if (!progressExercise) return [];
+
+    return Array.from(
+      new Set(
+        workouts
+          .filter((workout) => workout.exercise === progressExercise && workout.equipment)
+          .map((workout) => workout.equipment)
+      )
+    ).sort();
+  }, [progressExercise, workouts]);
+
+  const selectedProgressEquipment =
+    progressEquipmentOptions.includes(progressEquipment)
+      ? progressEquipment
+      : progressEquipmentOptions[0] || "";
+
+  const templateRecommendations = useMemo(() => {
+    const sessions = workouts.reduce((acc, workout) => {
+      const dateKey = getDateKey(workout.createdAt);
+      if (!dateKey) return acc;
+
+      const workoutSplit = getSplitForWorkout(workout);
+      const isMatch = workout.split === templateSplit || workoutSplit === templateSplit;
+      if (!isMatch) return acc;
+
+      if (!acc[dateKey]) acc[dateKey] = [];
+      acc[dateKey].push(workout);
+      return acc;
+    }, {});
+
+    const exerciseStats = Object.values(sessions).reduce((acc, sessionWorkouts) => {
+      sessionWorkouts
+        .sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0))
+        .forEach((workout, index) => {
+          if (!acc[workout.exercise]) {
+            acc[workout.exercise] = {
+              exercise: workout.exercise,
+              count: 0,
+              orderTotal: 0,
+              equipmentCounts: {},
+            };
+          }
+
+          acc[workout.exercise].count += 1;
+          acc[workout.exercise].orderTotal += index;
+          acc[workout.exercise].equipmentCounts[workout.equipment] =
+            (acc[workout.exercise].equipmentCounts[workout.equipment] || 0) + 1;
+        });
+
+      return acc;
+    }, {});
+
+    return Object.values(exerciseStats)
+      .map((item) => ({
+        ...item,
+        averageOrder: item.orderTotal / item.count,
+        equipment:
+          Object.entries(item.equipmentCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "",
+      }))
+      .sort((a, b) => a.averageOrder - b.averageOrder || b.count - a.count)
+      .slice(0, 8);
+  }, [templateSplit, workouts]);
+
+  const progressData = useMemo(
+    () =>
+      workouts
+        .filter((workout) => {
+          if (!progressExercise || workout.exercise !== progressExercise) return false;
+          if (
+            progressEquipmentOptions.length > 0 &&
+            workout.equipment !== selectedProgressEquipment
+          ) {
+            return false;
+          }
+
+          const workoutVariations = normalizeVariations(workout.variations);
+
+          return progressVariations.every((variation) =>
+            workoutVariations.includes(variation)
+          );
+        })
+        .sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0))
+        .map((workout) => ({
+          date: formatDate(workout.createdAt),
+          weight: workout.weight,
+          reps: Array.isArray(workout.sets) ? workout.sets.join(" / ") : "",
+          notes: workout.notes || "",
+        })),
+    [
+      progressEquipmentOptions.length,
+      progressExercise,
+      progressVariations,
+      selectedProgressEquipment,
+      workouts,
+    ]
+  );
+
+  const filteredGroupedHistory = useMemo(() => {
+    const matchesFilters = (workout) => {
+      if (selectedHistoryVariationFilters.length === 0) return true;
+
+      const workoutVariations = normalizeVariations(workout.variations);
+
+      return selectedHistoryVariationFilters.every((filter) => {
+        if (filter === "Standard") return workoutVariations.length === 0;
+        return workoutVariations.includes(filter);
+      });
+    };
+
+    return workouts.reduce((acc, workout) => {
+      if (!matchesFilters(workout)) return acc;
+
+      const workoutSplit = EXERCISE_CATEGORY[workout.exercise] || workout.split || "Other";
+      if (!acc[workoutSplit]) acc[workoutSplit] = {};
+      if (!acc[workoutSplit][workout.exercise]) acc[workoutSplit][workout.exercise] = [];
+
+      acc[workoutSplit][workout.exercise].push(workout);
+      return acc;
+    }, {});
+  }, [selectedHistoryVariationFilters, workouts]);
+
+  const toggleUser = () => {
+    setUser(nextUser);
+    setConfirmDelete(null);
+  };
+
+  const toggleArrayValue = (value, setter) => {
+    setter((current) =>
+      current.includes(value)
+        ? current.filter((item) => item !== value)
+        : [...current, value]
+    );
+  };
+
+  const toggleHistoryVariationFilter = (filter) => {
+    if (filter === "All") {
+      setSelectedHistoryVariationFilters([]);
+      return;
+    }
+
+    setSelectedHistoryVariationFilters((current) => {
+      if (filter === "Standard") {
+        return current.includes("Standard") ? [] : ["Standard"];
+      }
+
+      const withoutStandard = current.filter((item) => item !== "Standard");
+
+      return withoutStandard.includes(filter)
+        ? withoutStandard.filter((item) => item !== filter)
+        : [...withoutStandard, filter];
+    });
+  };
+
+  const toggleCollapse = (workoutSplit, workoutExercise) => {
+    const key = `${workoutSplit}-${workoutExercise}`;
+
+    setCollapsed((current) => ({
+      ...current,
+      [key]: !(current[key] ?? true),
+    }));
+  };
+
+  const updateSet = (index, value) => {
+    setSets((current) => current.map((item, itemIndex) => (itemIndex === index ? value : item)));
+  };
+
+  const resetForm = () => {
+    setSplit("");
+    setExercise("");
+    setCustomExercise("");
+    setEquipment("");
+    setWeight("");
+    setVariations([]);
+    setSets(["", "", "", ""]);
+    setNotes("");
+  };
+
+  const addWorkout = async (event) => {
+    event.preventDefault();
+
+    const completedSets = sets.filter((set) => set !== "").map(Number);
 
     await addDoc(workoutsRef, {
       user,
       split,
-      exercise,
+      exercise: resolvedExercise,
       equipment,
-      variations: Array.isArray(variations) ? variations : [],
+      variations,
       weight: Number(weight),
-      sets,
+      sets: completedSets,
       notes,
       createdAt: serverTimestamp(),
     });
 
-    setSplit("");
-    setExercise("");
-    setEquipment("");
-    setWeight("");
+    resetForm();
+  };
 
-    setSet1("");
-    setSet2("");
-    setSet3("");
-    setSet4("");
+  const applyTemplateRecommendation = (recommendation) => {
+    const isListedExercise = EXERCISE_MAP[templateSplit]?.includes(recommendation.exercise);
 
-    setNotes("");
+    setSplit(templateSplit);
+    setExercise(isListedExercise ? recommendation.exercise : "__custom__");
+    setCustomExercise(isListedExercise ? "" : recommendation.exercise);
+    setEquipment(recommendation.equipment);
+    setVariations([]);
+    setActiveView("Tracker");
   };
 
   const deleteWorkout = async (id) => {
     await deleteDoc(doc(db, "workouts", id));
   };
 
-
-  const chartData = workouts
-  .filter((w) => w.exercise === exercise)
-  .sort((a, b) => {
-    const aTime = a.createdAt?.seconds || 0;
-    const bTime = b.createdAt?.seconds || 0;
-    return aTime - bTime;
-  })
-  .map((w) => ({
-    date: w.createdAt?.seconds
-      ? new Date(w.createdAt.seconds * 1000).toLocaleDateString()
-      : "",
-
-    weight: w.weight,
-
-    reps: Array.isArray(w.sets)
-      ? w.sets.join("/")
-      : "",
-
-    notes: w.notes || ""
-  }));
-
-  const CustomTooltip = ({ active, payload }) => {
-    if (active && payload && payload.length) {
-      const data = payload[0].payload;
-  
-      return (
-        <div style={{ background: "white", padding: 10, border: "1px solid #ccc" }}>
-          <p><strong>{data.date}</strong></p>
-          <p>Weight: {data.weight} lbs</p>
-          <p>Reps: {data.reps}</p>
-          {data.notes && <p>Notes: {data.notes}</p>}
-        </div>
-      );
-    }
-    return null;
-  };
-
-
-
-// RETURN STATEMENT
   return (
-    <div style={{ padding: 20 }}>
-      <h1>Workout Tracker</h1>
-
-      <div style={{ marginBottom: 20 }}>
-        <label>Current User: </label>
-
-        <select value={user} onChange={(e) => setUser(e.target.value)}>
-          <option value="ryan">Ryan</option>
-          <option value="tuna">Tuna</option>
-        </select>
-      </div>
-
-      <form onSubmit={addWorkout}>
-        <select value={split} onChange={(e) => setSplit(e.target.value)}>
-          <option value="">Select Split</option>
-          <option value="Upper">Upper</option>
-          <option value="Lower">Lower</option>
-          <option value="Push">Push</option>
-          <option value="Pull">Pull</option>
-          <option value="Legs">Legs</option>
-        </select>
-
-        <br />
-
-        <select
-          value={exercise}
-          onChange={(e) => {
-            const val = e.target.value;
-            setExercise(val);
-            fetchLastWorkout(val, equipment, variations, user);
-          }}
-        >
-          <option value="">Select Exercise</option>
-
-          {availableExercises.map((ex) => (
-            <option key={ex} value={ex}>
-              {ex}
-            </option>
-          ))}
-        </select>
-
-        <br />
-
-        <select
-          value={equipment}
-          onChange={(e) => {
-            const val = e.target.value;
-            setEquipment(val);
-            fetchLastWorkout(exercise, val, variations, user);
-          }}
-        >
-          <option value="">Equipment</option>
-          <option value="Barbell">Barbell</option>
-          <option value="Dumbbell">Dumbbell</option>
-          <option value="Cable">Cable</option>
-          <option value="Machine">Machine</option>
-          <option value="Smith Machine">Smith Machine</option>
-        </select>
-        <br />
-        
-        <input
-          type="file"
-          accept=".csv"
-          onChange={(e) => importCSV(e.target.files[0])}
-        />
-        <br />
+    <main className="app-shell">
+      <section className="topbar">
         <div>
-          <label>
-            <input
-              type="checkbox"
-              checked={variations.includes("Incline")}
-              onChange={() => toggleVariation("Incline")}
-            />
-            Incline
-          </label>
-
-          <label>
-            <input
-              type="checkbox"
-              checked={variations.includes("Decline")}
-              onChange={() => toggleVariation("Decline")}
-            />
-            Decline
-          </label>
-
-          <label>
-            <input
-              type="checkbox"
-              checked={variations.includes("Unilateral")}
-              onChange={() => toggleVariation("Unilateral")}
-            />
-            Unilateral
-          </label>
+          <p className="eyebrow">Workout log</p>
+          <h1>Track the work. Keep the momentum.</h1>
         </div>
 
-        <br />
-        <input
-          placeholder="Weight"
-          type="number"
-          value={weight}
-          onChange={(e) => setWeight(e.target.value)}
-        />
+        <button className="user-switch" type="button" onClick={toggleUser}>
+          <span>{titleCaseUser(user)}</span>
+          <small>Switch to {titleCaseUser(nextUser)}</small>
+        </button>
+      </section>
 
-        <br />
-
-        <input
-          placeholder="Set 1"
-          type="number"
-          value={set1}
-          onChange={(e) => setSet1(e.target.value)}
-        />
-
-        <br />
-
-        <input
-          placeholder="Set 2"
-          type="number"
-          value={set2}
-          onChange={(e) => setSet2(e.target.value)}
-        />
-
-        <br />
-
-        <input
-          placeholder="Set 3"
-          type="number"
-          value={set3}
-          onChange={(e) => setSet3(e.target.value)}
-        />
-
-        <br />
-
-        <input
-          placeholder="Set 4"
-          type="number"
-          value={set4}
-          onChange={(e) => setSet4(e.target.value)}
-        />
-
-        <br />
-
-        <textarea
-          placeholder="Notes"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-        />
-
-        <br />
-
-        <button type="submit">Add Workout</button>
-      </form>
-
-      <hr />
-
-      <h2>Progress</h2>
-
-      {exercise ? (
-        <div style={{ width: "100%", height: 300 }}>
-          <ResponsiveContainer>
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="date" />
-              <YAxis />
-              <Tooltip content={<CustomTooltip />} />
-              <Line
-                type="monotone"
-                dataKey="weight"
-                stroke="#8884d8"
-                strokeWidth={2}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+      <section className="stats-grid">
+        <div className="stat-card">
+          <span>Sessions</span>
+          <strong>{userStats.total}</strong>
         </div>
-      ) : (
-        <p>Select an exercise to view progress</p>
-      )}
-<h2>History</h2>
+        <div className="stat-card">
+          <span>Exercises</span>
+          <strong>{userStats.uniqueExercises}</strong>
+        </div>
+        <div className="stat-card wide">
+          <span>Most logged</span>
+          <strong>{userStats.favoriteExercise}</strong>
+        </div>
+      </section>
 
-<div
-  style={{
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr 1fr",
-    gap: "24px",
-    alignItems: "start",
-  }}
->
-  {["Push", "Pull", "Legs"].map((split) => (
-    <div key={split}>
-      <h3>{split}</h3>
+      <section className="heatmap-panel" aria-label="Last 30 days workout heatmap">
+        <div>
+          <p className="eyebrow">Last 30 days</p>
+          <h2>Training rhythm</h2>
+        </div>
+        <div className="heatmap-grid">
+          {heatmapDays.map((day) => (
+            <span
+              aria-label={`${day.label}: ${day.count} workout${day.count === 1 ? "" : "s"}`}
+              className={`heatmap-day level-${Math.min(day.count, 4)}`}
+              key={day.key}
+              title={`${day.label}: ${day.count} workout${day.count === 1 ? "" : "s"}`}
+            />
+          ))}
+        </div>
+      </section>
 
-      {Object.entries(groupedHistory[split] || {})
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([exercise, items]) => (
-          <div key={exercise} style={{ marginBottom: 20 }}>
-            <div
-              onClick={() => toggleCollapse(exercise)}
-              style={{
-                cursor: "pointer",
-                fontWeight: "bold",
-                fontSize: 16,
-                marginBottom: 5,
-              }}
-            >
-              {exercise} {collapsed[exercise] ? "▶" : "▼"}
+      <nav className="tabbar" aria-label="App sections">
+        {["Tracker", "Templates", "Progress", "History", "Settings"].map((view) => (
+          <button
+            className={activeView === view ? "active" : ""}
+            key={view}
+            type="button"
+            onClick={() => setActiveView(view)}
+          >
+            {view}
+          </button>
+        ))}
+      </nav>
+
+      {activeView === "Tracker" && (
+        <section className="workspace two-column">
+          <form className="panel tracker-form" onSubmit={addWorkout}>
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">New session</p>
+                <h2>Log a lift</h2>
+              </div>
+              <button className="ghost-button" type="button" onClick={resetForm}>
+                Clear
+              </button>
             </div>
 
-            {!collapsed[exercise] && (
-              <div style={{ paddingLeft: 10 }}>
-                {items.map((w) => (
-                  <div
-                    key={w.id}
-                    style={{
-                      marginBottom: 12,
-                      paddingLeft: 8,
-                    }}
-                  >
-                    <div style={{ fontWeight: 600 }}>
-                      {w.weight} lbs ({w.equipment}) —{" "}
-                      {w.sets?.join(" / ")}
+            <div className="field-grid">
+              <label>
+                <span>Split</span>
+                <select
+                  value={split}
+                  onChange={(event) => {
+                    setSplit(event.target.value);
+                    setExercise("");
+                  }}
+                  required
+                >
+                  <option value="">Choose split</option>
+                  {TRACKER_SPLITS.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                <span>Exercise</span>
+                <select
+                  value={exercise}
+                  onChange={(event) => setExercise(event.target.value)}
+                  disabled={!split}
+                  required
+                >
+                  <option value="">Choose exercise</option>
+                  {availableExercises.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                  <option value="__custom__">Custom exercise</option>
+                </select>
+              </label>
+
+              {exercise === "__custom__" && (
+                <label>
+                  <span>Custom name</span>
+                  <input
+                    placeholder="Abs, carries, mobility, or anything else"
+                    type="text"
+                    value={customExercise}
+                    onChange={(event) => setCustomExercise(event.target.value)}
+                    required
+                  />
+                </label>
+              )}
+
+              <label>
+                <span>Equipment</span>
+                <select
+                  value={equipment}
+                  onChange={(event) => setEquipment(event.target.value)}
+                  required
+                >
+                  <option value="">Choose equipment</option>
+                  {EQUIPMENT.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                <span>Weight</span>
+                <input
+                  placeholder={lastWorkout?.weight ? `Last: ${lastWorkout.weight} lbs` : "Weight"}
+                  type="number"
+                  value={weight}
+                  onChange={(event) => setWeight(event.target.value)}
+                  required
+                />
+              </label>
+            </div>
+
+            {/* Old-data import kept hidden for occasional manual backfill.
+            <input type="file" accept=".csv" onChange={(event) => importCSV(event.target.files[0])} />
+            */}
+
+            <div className="chip-group" aria-label="Exercise attributes">
+              {VARIATIONS.map((variation) => (
+                <button
+                  className={variations.includes(variation) ? "chip active" : "chip"}
+                  key={variation}
+                  type="button"
+                  onClick={() => toggleArrayValue(variation, setVariations)}
+                >
+                  {variation}
+                </button>
+              ))}
+            </div>
+
+            <div className="sets-grid">
+              {sets.map((setValue, index) => (
+                <label key={`set-${index + 1}`}>
+                  <span>Set {index + 1}</span>
+                  <input
+                    placeholder={
+                      lastWorkout?.sets?.[index] ? `Last: ${lastWorkout.sets[index]}` : "Reps"
+                    }
+                    type="number"
+                    value={setValue}
+                    onChange={(event) => updateSet(index, event.target.value)}
+                  />
+                </label>
+              ))}
+            </div>
+
+            <label>
+              <span>Notes</span>
+              <textarea
+                placeholder="Tempo, form notes, pain flags, or anything worth remembering"
+                value={notes}
+                onChange={(event) => setNotes(event.target.value)}
+              />
+            </label>
+
+            <button className="primary-button" type="submit">
+              Add workout
+            </button>
+          </form>
+
+          <aside className="panel last-panel">
+            <p className="eyebrow">Last matching session</p>
+            {lastWorkout ? (
+              <>
+                <h2>{lastWorkout.exercise}</h2>
+                <div className="last-metric">
+                  <strong>{lastWorkout.weight} lbs</strong>
+                  <span>{lastWorkout.sets?.join(" / ")} reps</span>
+                </div>
+                <p>{formatDate(lastWorkout.createdAt)}</p>
+                <p className="muted">
+                  {lastWorkout.variations?.length ? lastWorkout.variations.join(" / ") : "Standard"}
+                </p>
+              </>
+            ) : (
+              <>
+                <h2>No match yet</h2>
+                <p className="muted">
+                  Select an exercise, equipment, and attributes to see the exact previous numbers.
+                </p>
+              </>
+            )}
+          </aside>
+        </section>
+      )}
+
+      {activeView === "Templates" && (
+        <section className="workspace">
+          <div className="panel">
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">Templates</p>
+                <h2>Recommended order</h2>
+              </div>
+              <span className="pill">{titleCaseUser(user)}</span>
+            </div>
+
+            <div className="template-tabs" aria-label="Template split">
+              {TEMPLATE_SPLITS.map((item) => (
+                <button
+                  className={templateSplit === item ? "active" : ""}
+                  key={item}
+                  type="button"
+                  onClick={() => setTemplateSplit(item)}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+
+            {templateRecommendations.length > 0 ? (
+              <div className="template-list">
+                {templateRecommendations.map((recommendation, index) => (
+                  <article className="template-row" key={recommendation.exercise}>
+                    <div className="template-rank">{index + 1}</div>
+                    <div>
+                      <strong>{recommendation.exercise}</strong>
+                      <span>
+                        {recommendation.equipment || "Any equipment"} - logged{" "}
+                        {recommendation.count} time{recommendation.count === 1 ? "" : "s"}
+                      </span>
                     </div>
-
-                    {Array.isArray(w.variations) &&
-                      w.variations.length > 0 && (
-                        <div
-                          style={{
-                            fontSize: 12,
-                            opacity: 0.7,
-                          }}
-                        >
-                          {w.variations.join(" • ")}
-                        </div>
-                      )}
-
-                    {w.notes && (
-                      <div
-                        style={{
-                          fontSize: 12,
-                          opacity: 0.7,
-                        }}
-                      >
-                        {w.notes}
-                      </div>
-                    )}
-
                     <button
-                      onClick={() => deleteWorkout(w.id)}
-                      style={{
-                        marginTop: 6,
-                        fontSize: 12,
-                      }}
+                      className="ghost-button"
+                      type="button"
+                      onClick={() => applyTemplateRecommendation(recommendation)}
                     >
-                      Delete
+                      Use
                     </button>
-                  </div>
+                  </article>
                 ))}
+              </div>
+            ) : (
+              <div className="empty-state template-empty">
+                Log a few {templateSplit} workouts and this will learn your usual exercise order.
               </div>
             )}
           </div>
-        ))}
-    </div>
-  ))}
-  </div>
+        </section>
+      )}
 
-  </div>
+      {activeView === "Progress" && (
+        <section className="workspace">
+          <div className="panel">
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">Progress</p>
+                <h2>Exercise trend</h2>
+              </div>
+              <span className="pill">{progressData.length} points</span>
+            </div>
+
+            <div className="field-grid progress-controls">
+              <label>
+                <span>Exercise</span>
+                <select
+                  value={progressExercise}
+                  onChange={(event) => setProgressExercise(event.target.value)}
+                >
+                  <option value="">Choose exercise</option>
+                  {selectableExercises.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                <span>Equipment</span>
+                <select
+                  value={selectedProgressEquipment}
+                  onChange={(event) => setProgressEquipment(event.target.value)}
+                  disabled={!progressExercise || progressEquipmentOptions.length === 0}
+                >
+                  <option value="">
+                    {progressExercise ? "No logged equipment yet" : "Choose exercise first"}
+                  </option>
+                  {progressEquipmentOptions.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="chip-group">
+              {VARIATIONS.map((variation) => (
+                <button
+                  className={progressVariations.includes(variation) ? "chip active" : "chip"}
+                  key={variation}
+                  type="button"
+                  onClick={() => toggleArrayValue(variation, setProgressVariations)}
+                >
+                  {variation}
+                </button>
+              ))}
+            </div>
+
+            <div className="chart-wrap">
+              {progressExercise && progressData.length > 0 ? (
+                <ResponsiveContainer>
+                  <AreaChart data={progressData}>
+                    <defs>
+                      <linearGradient id="weightGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#67E8F9" stopOpacity={0.78} />
+                        <stop offset="45%" stopColor="#A78BFA" stopOpacity={0.38} />
+                        <stop offset="100%" stopColor="#34D399" stopOpacity={0.04} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid stroke="#263245" strokeDasharray="3 3" />
+                    <XAxis dataKey="date" stroke="#94A3B8" tickLine={false} />
+                    <YAxis stroke="#94A3B8" tickLine={false} width={42} />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Area
+                      type="monotone"
+                      dataKey="weight"
+                      stroke="#67E8F9"
+                      strokeWidth={3}
+                      fill="url(#weightGradient)"
+                      fillOpacity={1}
+                      dot={{ r: 4, fill: "#101827", stroke: "#67E8F9", strokeWidth: 2 }}
+                      activeDot={{ r: 6 }}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="empty-state">
+                  {progressExercise
+                    ? "No matching data yet for this exercise and filter."
+                    : "Choose an exercise to draw the progress chart."}
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {activeView === "History" && (
+        <section className="workspace">
+          <div className="panel">
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">History</p>
+                <h2>Past sessions</h2>
+              </div>
+              <div className="chip-group compact">
+                {HISTORY_FILTERS.map((filter) => (
+                  <button
+                    className={
+                      (filter === "All" && selectedHistoryVariationFilters.length === 0) ||
+                      selectedHistoryVariationFilters.includes(filter)
+                        ? "chip active"
+                        : "chip"
+                    }
+                    key={filter}
+                    type="button"
+                    onClick={() => toggleHistoryVariationFilter(filter)}
+                  >
+                    {filter}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="history-grid">
+              {[
+                ...PRIMARY_SPLITS,
+                ...(filteredGroupedHistory?.Other ? ["Other"] : []),
+              ].map((workoutSplit) => (
+                <section className="history-column" key={workoutSplit}>
+                  <h3>{workoutSplit === "Other" ? "Uncategorized" : workoutSplit}</h3>
+                  {Object.entries(filteredGroupedHistory?.[workoutSplit] ?? {})
+                    .sort(([a], [b]) => a.localeCompare(b))
+                    .map(([workoutExercise, items]) => {
+                      const key = `${workoutSplit}-${workoutExercise}`;
+                      const isCollapsed = collapsed[key] ?? true;
+
+                      return (
+                        <div className="history-group" key={workoutExercise}>
+                          <button
+                            className="history-toggle"
+                            type="button"
+                            onClick={() => toggleCollapse(workoutSplit, workoutExercise)}
+                          >
+                            <span>{workoutExercise}</span>
+                            <small>{items.length}</small>
+                            <strong>{isCollapsed ? "+" : "-"}</strong>
+                          </button>
+
+                          {!isCollapsed && (
+                            <div className="history-list">
+                              {items.map((workout) => (
+                                <article className="workout-row" key={workout.id}>
+                                  <div>
+                                    <span className="muted">{formatDate(workout.createdAt)}</span>
+                                    <strong>
+                                      {workout.weight} lbs - {workout.sets?.join(" / ")}
+                                    </strong>
+                                    <small>
+                                      {workout.equipment}
+                                      {" | "}
+                                      {workout.variations?.length
+                                        ? workout.variations.join(" / ")
+                                        : "Standard"}
+                                    </small>
+                                    {workout.notes && <p>{workout.notes}</p>}
+                                  </div>
+
+                                  {confirmDelete === workout.id ? (
+                                    <button
+                                      className="danger-button"
+                                      type="button"
+                                      onClick={() => {
+                                        deleteWorkout(workout.id);
+                                        setConfirmDelete(null);
+                                      }}
+                                    >
+                                      Confirm
+                                    </button>
+                                  ) : (
+                                    <button
+                                      className="ghost-button"
+                                      type="button"
+                                      onClick={() => setConfirmDelete(workout.id)}
+                                    >
+                                      Delete
+                                    </button>
+                                  )}
+                                </article>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                </section>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {activeView === "Settings" && (
+        <section className="workspace two-column">
+          <div className="panel">
+            <p className="eyebrow">Settings</p>
+            <h2>Profile</h2>
+            <div className="settings-list">
+              <div>
+                <span>Active user</span>
+                <strong>{titleCaseUser(user)}</strong>
+              </div>
+              <div>
+                <span>Workout styles</span>
+                <strong>Push/Pull/Legs, Upper/Lower, and Core</strong>
+              </div>
+              <div>
+                <span>Data scope</span>
+                <strong>Each user sees their own workout history</strong>
+              </div>
+            </div>
+          </div>
+
+          <div className="panel">
+            <p className="eyebrow">Ideas baked in</p>
+            <h2>Built for the next pass</h2>
+            <p className="muted">
+              The app now has a cleaner shell for adding future settings like preferred split,
+              default equipment, exercise management, or export tools without crowding the tracker.
+            </p>
+          </div>
+        </section>
+      )}
+    </main>
   );
 }

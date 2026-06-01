@@ -12,6 +12,17 @@ import {
   where,
 } from "firebase/firestore";
 
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer
+} from "recharts";
+import { importCSV } from "./importWorkouts";
+
 export default function App() {
   const [split, setSplit] = useState("");
   const [exercise, setExercise] = useState("");
@@ -27,21 +38,25 @@ export default function App() {
 
   const [workouts, setWorkouts] = useState([]);
   const [user, setUser] = useState("ryan");
+  const [collapsed, setCollapsed] = useState({});
+
   const toggleVariation = (v) => {
     setVariations((prev) => {
       const updated = prev.includes(v)
         ? prev.filter((x) => x !== v)
         : [...prev, v];
   
-      fetchLastWorkout(exercise, equipment, updated);
+      fetchLastWorkout(exercise, equipment, updated, user);
   
       return updated;
     });
   };
   const [lastWorkout, setLastWorkout] = useState(null);
-  const fetchLastWorkout = (selectedExercise, selectedEquipment, selectedVariations) => {
+  const fetchLastWorkout = (selectedExercise, selectedEquipment, selectedVariations, currentUser) => {
     const previous = workouts
       .filter((w) => {
+        const sameUser = w.user === currentUser;
+  
         const sameExercise = w.exercise === selectedExercise;
         const sameEquipment = w.equipment === selectedEquipment;
   
@@ -52,7 +67,11 @@ export default function App() {
           prevVars.length === currVars.length &&
           prevVars.every((v) => currVars.includes(v));
   
-        return sameExercise && sameEquipment && sameVariations;
+        return (
+          sameUser &&
+          sameExercise &&
+          sameEquipment
+        );
       })
       .sort((a, b) => {
         const aTime = a.createdAt?.seconds || 0;
@@ -142,6 +161,47 @@ export default function App() {
   };
   const availableExercises = exerciseMap[split] || [];
 
+  const exerciseCategory = {};
+
+  Object.entries(exerciseMap).forEach(([split, exercises]) => {
+    if (["Push", "Pull", "Legs"].includes(split)) {
+      exercises.forEach((ex) => {
+        exerciseCategory[ex] = split;
+      });
+    }
+  });
+
+  const groupedWorkouts = workouts.reduce((groups, workout) => {
+    const key = workout.exercise;
+  
+    if (!groups[key]) {
+      groups[key] = [];
+    }
+  
+    groups[key].push(workout);
+    return groups;
+  }, {});
+
+  const toggleCollapse = (exercise) => {
+    setCollapsed((prev) => ({
+      ...prev,
+      [exercise]: !prev[exercise],
+    }));
+  };
+
+  const groupedHistory = workouts.reduce((acc, workout) => {
+    const split = exerciseCategory[workout.exercise] || "Other";
+  
+    if (!acc[split]) acc[split] = {};
+    if (!acc[split][workout.exercise]) {
+      acc[split][workout.exercise] = [];
+    }
+  
+    acc[split][workout.exercise].push(workout);
+  
+    return acc;
+  }, {});
+
   useEffect(() => {
     const q = query(
       workoutsRef,
@@ -202,6 +262,47 @@ export default function App() {
     await deleteDoc(doc(db, "workouts", id));
   };
 
+
+  const chartData = workouts
+  .filter((w) => w.exercise === exercise)
+  .sort((a, b) => {
+    const aTime = a.createdAt?.seconds || 0;
+    const bTime = b.createdAt?.seconds || 0;
+    return aTime - bTime;
+  })
+  .map((w) => ({
+    date: w.createdAt?.seconds
+      ? new Date(w.createdAt.seconds * 1000).toLocaleDateString()
+      : "",
+
+    weight: w.weight,
+
+    reps: Array.isArray(w.sets)
+      ? w.sets.join("/")
+      : "",
+
+    notes: w.notes || ""
+  }));
+
+  const CustomTooltip = ({ active, payload }) => {
+    if (active && payload && payload.length) {
+      const data = payload[0].payload;
+  
+      return (
+        <div style={{ background: "white", padding: 10, border: "1px solid #ccc" }}>
+          <p><strong>{data.date}</strong></p>
+          <p>Weight: {data.weight} lbs</p>
+          <p>Reps: {data.reps}</p>
+          {data.notes && <p>Notes: {data.notes}</p>}
+        </div>
+      );
+    }
+    return null;
+  };
+
+
+
+// RETURN STATEMENT
   return (
     <div style={{ padding: 20 }}>
       <h1>Workout Tracker</h1>
@@ -232,7 +333,7 @@ export default function App() {
           onChange={(e) => {
             const val = e.target.value;
             setExercise(val);
-            fetchLastWorkout(val, equipment, variations);;
+            fetchLastWorkout(val, equipment, variations, user);
           }}
         >
           <option value="">Select Exercise</option>
@@ -251,7 +352,7 @@ export default function App() {
           onChange={(e) => {
             const val = e.target.value;
             setEquipment(val);
-            fetchLastWorkout(exercise, val, variations);
+            fetchLastWorkout(exercise, val, variations, user);
           }}
         >
           <option value="">Equipment</option>
@@ -261,7 +362,13 @@ export default function App() {
           <option value="Machine">Machine</option>
           <option value="Smith Machine">Smith Machine</option>
         </select>
-
+        <br />
+        
+        <input
+          type="file"
+          accept=".csv"
+          onChange={(e) => importCSV(e.target.files[0])}
+        />
         <br />
         <div>
           <label>
@@ -351,34 +458,115 @@ export default function App() {
 
       <hr />
 
-      <h2>History</h2>
+      <h2>Progress</h2>
 
-      {workouts.map((w) => (
-        <div key={w.id} style={{ marginBottom: 15 }}>
-          <div>
-            {w.exercise} ({w.equipment})
-          </div>
-
-          <div>
-            Variations: {Array.isArray(w.variations) ? w.variations.join(", ") : ""}
-          </div>
-
-          <div>{w.weight} lbs</div>
-
-          <div>Sets: {w.sets?.join(" / ")}</div>
-
-          <div>{w.split}</div>
-
-          {w.notes && <div>Notes: {w.notes}</div>}
-
-          <button
-            onClick={() => deleteWorkout(w.id)}
-            style={{ marginTop: 5 }}
-          >
-            Delete
-          </button>
+      {exercise ? (
+        <div style={{ width: "100%", height: 300 }}>
+          <ResponsiveContainer>
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="date" />
+              <YAxis />
+              <Tooltip content={<CustomTooltip />} />
+              <Line
+                type="monotone"
+                dataKey="weight"
+                stroke="#8884d8"
+                strokeWidth={2}
+              />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
-      ))}
+      ) : (
+        <p>Select an exercise to view progress</p>
+      )}
+<h2>History</h2>
+
+<div
+  style={{
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr 1fr",
+    gap: "24px",
+    alignItems: "start",
+  }}
+>
+  {["Push", "Pull", "Legs"].map((split) => (
+    <div key={split}>
+      <h3>{split}</h3>
+
+      {Object.entries(groupedHistory[split] || {})
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([exercise, items]) => (
+          <div key={exercise} style={{ marginBottom: 20 }}>
+            <div
+              onClick={() => toggleCollapse(exercise)}
+              style={{
+                cursor: "pointer",
+                fontWeight: "bold",
+                fontSize: 16,
+                marginBottom: 5,
+              }}
+            >
+              {exercise} {collapsed[exercise] ? "▶" : "▼"}
+            </div>
+
+            {!collapsed[exercise] && (
+              <div style={{ paddingLeft: 10 }}>
+                {items.map((w) => (
+                  <div
+                    key={w.id}
+                    style={{
+                      marginBottom: 12,
+                      paddingLeft: 8,
+                    }}
+                  >
+                    <div style={{ fontWeight: 600 }}>
+                      {w.weight} lbs ({w.equipment}) —{" "}
+                      {w.sets?.join(" / ")}
+                    </div>
+
+                    {Array.isArray(w.variations) &&
+                      w.variations.length > 0 && (
+                        <div
+                          style={{
+                            fontSize: 12,
+                            opacity: 0.7,
+                          }}
+                        >
+                          {w.variations.join(" • ")}
+                        </div>
+                      )}
+
+                    {w.notes && (
+                      <div
+                        style={{
+                          fontSize: 12,
+                          opacity: 0.7,
+                        }}
+                      >
+                        {w.notes}
+                      </div>
+                    )}
+
+                    <button
+                      onClick={() => deleteWorkout(w.id)}
+                      style={{
+                        marginTop: 6,
+                        fontSize: 12,
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
     </div>
+  ))}
+  </div>
+
+  </div>
   );
 }

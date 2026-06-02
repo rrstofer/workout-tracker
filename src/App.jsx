@@ -183,6 +183,7 @@ export default function App() {
   const [selectedHistoryVariationFilters, setSelectedHistoryVariationFilters] = useState([]);
   const [collapsed, setCollapsed] = useState({});
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [selectedHeatmapDay, setSelectedHeatmapDay] = useState(null);
 
   useEffect(() => {
     const q = query(workoutsRef, where("user", "==", user), orderBy("createdAt", "desc"));
@@ -491,7 +492,7 @@ export default function App() {
       <section className="topbar">
         <div>
           <p className="eyebrow">Workout log</p>
-          <h1>Track the work. Keep the momentum.</h1>
+          <h1>頑張れ！</h1>
         </div>
 
         <button className="user-switch" type="button" onClick={toggleUser}>
@@ -523,17 +524,41 @@ export default function App() {
         <div className="heatmap-grid">
           {heatmapDays.map((day) => (
             <span
-              aria-label={`${day.label}: ${day.count} workout${day.count === 1 ? "" : "s"}`}
-              className={`heatmap-day level-${Math.min(day.count, 4)}`}
-              key={day.key}
-              title={`${day.label}: ${day.count} workout${day.count === 1 ? "" : "s"}`}
-            />
+            aria-label={`${day.label}: ${day.count} workout${day.count === 1 ? "" : "s"}`}
+            className={`heatmap-day level-${Math.min(day.count, 4)}`}
+            key={day.key}
+            onClick={() => setSelectedHeatmapDay(day)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") setSelectedHeatmapDay(day);
+            }}
+          />
           ))}
         </div>
       </section>
 
+      {selectedHeatmapDay && (
+        <div className="heatmap-popup" onClick={() => setSelectedHeatmapDay(null)}>
+          <div
+            className="heatmap-popup-inner"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <strong>{selectedHeatmapDay.label}</strong>
+            <p>
+              {selectedHeatmapDay.count} workout
+              {selectedHeatmapDay.count === 1 ? "" : "s"}
+            </p>
+
+            <button onClick={() => setSelectedHeatmapDay(null)}>
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
       <nav className="tabbar" aria-label="App sections">
-        {["Tracker", "Templates", "Progress", "History", "Settings"].map((view) => (
+        {["Tracker", "Progress", "History", "Templates", "Settings"].map((view) => (
           <button
             className={activeView === view ? "active" : ""}
             key={view}

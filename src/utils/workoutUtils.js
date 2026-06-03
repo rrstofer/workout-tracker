@@ -22,8 +22,23 @@ export const normalizeVariations = (value) => {
     .filter(Boolean);
 };
 
+export const timestampToDate = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (typeof value.toDate === "function") return value.toDate();
+  if (typeof value.seconds === "number") return new Date(value.seconds * 1000);
+  return null;
+};
+
 export const formatDate = (createdAt) =>
-  createdAt?.seconds ? new Date(createdAt.seconds * 1000).toLocaleDateString() : "No date";
+  timestampToDate(createdAt)?.toLocaleDateString() || "No date";
+
+export const formatPacificTime = (createdAt) =>
+  timestampToDate(createdAt)?.toLocaleTimeString("en-US", {
+    timeZone: "America/Los_Angeles",
+    hour: "numeric",
+    minute: "2-digit",
+  }) || "Syncing...";
 
 export const getLocalDateKey = (date) => {
   const year = date.getFullYear();
@@ -33,15 +48,17 @@ export const getLocalDateKey = (date) => {
 };
 
 export const getDateKey = (createdAt) => {
-  if (!createdAt?.seconds) return "";
-  return getLocalDateKey(new Date(createdAt.seconds * 1000));
+  const date = timestampToDate(createdAt);
+  if (!date) return "";
+  return getLocalDateKey(date);
 };
 
 export const getSplitForWorkout = (workout) =>
   EXERCISE_CATEGORY[workout.exercise] || workout.split || "Other";
 
 export const isWithinLastHours = (createdAt, hours) => {
-  if (!createdAt?.seconds) return false;
-  const ageMs = Date.now() - createdAt.seconds * 1000;
+  const date = timestampToDate(createdAt);
+  if (!date) return true;
+  const ageMs = Date.now() - date.getTime();
   return ageMs >= 0 && ageMs <= hours * 60 * 60 * 1000;
 };

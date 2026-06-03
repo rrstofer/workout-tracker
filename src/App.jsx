@@ -41,6 +41,7 @@ import { useLocalStorage } from "./hooks/useLocalStorage";
 import {
   emptyForm,
   formatDate,
+  formatPacificTime,
   getDateKey,
   getLocalDateKey,
   getSplitForWorkout,
@@ -912,7 +913,10 @@ export default function App() {
                               {items.map((workout) => (
                                 <article className="workout-row" key={workout.id}>
                                   <div>
-                                    <span className="muted">{formatDate(workout.createdAt)}</span>
+                                    <span className="muted">
+                                      {formatDate(workout.createdAt)} -{" "}
+                                      {formatPacificTime(workout.createdAt)} PST
+                                    </span>
                                     <strong>
                                       {workout.weight} lbs - {workout.sets?.join(" / ")}
                                     </strong>
@@ -926,26 +930,36 @@ export default function App() {
                                     {workout.notes && <p>{workout.notes}</p>}
                                   </div>
 
-                                  {confirmDelete === workout.id ? (
-                                    <button
-                                      className="danger-button"
-                                      type="button"
-                                      onClick={() => {
-                                        deleteWorkout(workout.id);
-                                        setConfirmDelete(null);
-                                      }}
-                                    >
-                                      Confirm
-                                    </button>
-                                  ) : (
+                                  <div className="workout-actions">
                                     <button
                                       className="ghost-button"
                                       type="button"
-                                      onClick={() => setConfirmDelete(workout.id)}
+                                      onClick={() => editWorkout(workout)}
                                     >
-                                      Delete
+                                      Edit
                                     </button>
-                                  )}
+
+                                    {confirmDelete === workout.id ? (
+                                      <button
+                                        className="danger-button"
+                                        type="button"
+                                        onClick={() => {
+                                          deleteWorkout(workout.id);
+                                          setConfirmDelete(null);
+                                        }}
+                                      >
+                                        Confirm
+                                      </button>
+                                    ) : (
+                                      <button
+                                        className="ghost-button"
+                                        type="button"
+                                        onClick={() => setConfirmDelete(workout.id)}
+                                      >
+                                        Delete
+                                      </button>
+                                    )}
+                                  </div>
                                 </article>
                               ))}
                             </div>

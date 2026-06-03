@@ -1,4 +1,4 @@
-import { formatDate } from "../utils/workoutUtils";
+import { formatDate, formatPacificTime } from "../utils/workoutUtils";
 
 export function TrackerSidePanel({
   confirmDelete,
@@ -46,7 +46,9 @@ export function TrackerSidePanel({
                   <span>
                     {workout.weight} lbs - {workout.sets?.join(" / ")}
                   </span>
-                  <small>{workout.equipment}</small>
+                  <small>
+                    {workout.equipment} - {formatPacificTime(workout.createdAt)} PST
+                  </small>
                 </div>
                 <div className="recent-actions">
                   <button className="ghost-button" type="button" onClick={() => editWorkout(workout)}>

@@ -2,8 +2,8 @@ export const USERS = ["ryan", "tuna"];
 export const VARIATIONS = ["Incline", "Decline", "Unilateral"];
 export const HISTORY_FILTERS = ["All", "Standard", ...VARIATIONS];
 export const EQUIPMENT = ["Barbell", "Dumbbell", "Cable", "Machine", "Smith Machine"];
-export const TRACKER_SPLITS = ["Upper", "Lower", "Push", "Pull", "Legs", "Core"];
-export const TEMPLATE_SPLITS = ["Push", "Pull", "Legs", "Upper", "Lower", "Core"];
+export const TRACKER_SPLITS = ["Upper", "Push", "Pull", "Legs", "Core"];
+export const TEMPLATE_SPLITS = ["Push", "Pull", "Legs", "Upper", "Core"];
 export const PRIMARY_SPLITS = ["Push", "Pull", "Legs", "Core"];
 
 export const EXERCISE_MAP = {
@@ -54,18 +54,6 @@ export const EXERCISE_MAP = {
     "Rear Delt Fly",
     "Bicep Curl",
     "Hammer Curl",
-  ],
-  Lower: [
-    "Squat",
-    "Hack Squat",
-    "Deadlift",
-    "Romanian Deadlift",
-    "Leg Press",
-    "Hip Thrust",
-    "Leg Curl",
-    "Leg Extension",
-    "Calf Raise",
-    "Seated Calf Raise",
   ],
   Core: [
     "Cable Crunch",

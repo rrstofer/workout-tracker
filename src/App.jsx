@@ -37,6 +37,7 @@ import {
 import { ChartTooltip } from "./components/ChartTooltip";
 import { TrackerSidePanel } from "./components/TrackerSidePanel";
 import { Toast } from "./components/Toast";
+import { HistoryFilters } from "./components/HistoryFilters";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import {
   emptyForm,
@@ -74,6 +75,18 @@ export default function App() {
   const [selectedHistoryVariationFilters, setSelectedHistoryVariationFilters] = useLocalStorage(
     "workoutTracker.historyFilters",
     []
+  );
+  const [historySearchTerm, setHistorySearchTerm] = useLocalStorage(
+    "workoutTracker.historySearchTerm",
+    ""
+  );
+  const [historySortOrder, setHistorySortOrder] = useLocalStorage(
+    "workoutTracker.historySortOrder",
+    "newest"
+  );
+  const [selectedHistorySplits, setSelectedHistorySplits] = useLocalStorage(
+    "workoutTracker.selectedHistorySplits",
+    [...PRIMARY_SPLITS]
   );
   const [collapsed, setCollapsed] = useState({});
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -287,19 +300,40 @@ export default function App() {
 
   const filteredGroupedHistory = useMemo(() => {
     const matchesFilters = (workout) => {
-      if (selectedHistoryVariationFilters.length === 0) return true;
+      // Check variation filters
+      if (selectedHistoryVariationFilters.length > 0) {
+        const workoutVariations = normalizeVariations(workout.variations);
+        const hasValidVariation = selectedHistoryVariationFilters.every((filter) => {
+          if (filter === "Standard") return workoutVariations.length === 0;
+          return workoutVariations.includes(filter);
+        });
+        if (!hasValidVariation) return false;
+      }
 
-      const workoutVariations = normalizeVariations(workout.variations);
+      // Check search term
+      if (historySearchTerm.trim() !== "") {
+        const searchLower = historySearchTerm.toLowerCase();
+        if (!workout.exercise.toLowerCase().includes(searchLower)) return false;
+      }
 
-      return selectedHistoryVariationFilters.every((filter) => {
-        if (filter === "Standard") return workoutVariations.length === 0;
-        return workoutVariations.includes(filter);
-      });
+      // Check split filter
+      const workoutSplit = EXERCISE_CATEGORY[workout.exercise] || workout.split || "Other";
+      if (!selectedHistorySplits.includes(workoutSplit)) return false;
+
+      return true;
     };
 
-    return workouts.reduce((acc, workout) => {
-      if (!matchesFilters(workout)) return acc;
+    const filtered = workouts.filter(matchesFilters);
 
+    // Sort by date
+    const sorted = filtered.sort((a, b) => {
+      const aTime = a.createdAt?.seconds || 0;
+      const bTime = b.createdAt?.seconds || 0;
+      return historySortOrder === "newest" ? bTime - aTime : aTime - bTime;
+    });
+
+    // Group by split then exercise
+    return sorted.reduce((acc, workout) => {
       const workoutSplit = EXERCISE_CATEGORY[workout.exercise] || workout.split || "Other";
       if (!acc[workoutSplit]) acc[workoutSplit] = {};
       if (!acc[workoutSplit][workout.exercise]) acc[workoutSplit][workout.exercise] = [];
@@ -307,7 +341,7 @@ export default function App() {
       acc[workoutSplit][workout.exercise].push(workout);
       return acc;
     }, {});
-  }, [selectedHistoryVariationFilters, workouts]);
+  }, [selectedHistoryVariationFilters, historySearchTerm, historySortOrder, selectedHistorySplits, workouts]);
 
   const recentWorkouts = useMemo(
     () => workouts.filter((workout) => isWithinLastHours(workout.createdAt, 24)),
@@ -882,6 +916,15 @@ export default function App() {
                 ))}
               </div>
             </div>
+
+            <HistoryFilters
+              searchTerm={historySearchTerm}
+              setSearchTerm={setHistorySearchTerm}
+              sortOrder={historySortOrder}
+              setSortOrder={setHistorySortOrder}
+              selectedSplits={selectedHistorySplits}
+              setSelectedSplits={setSelectedHistorySplits}
+            />
 
             <div className="history-grid">
               {[

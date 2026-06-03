@@ -80,6 +80,10 @@ export default function App() {
     "workoutTracker.historySearchTerm",
     ""
   );
+  const [selectedHistoryExercise, setSelectedHistoryExercise] = useLocalStorage(
+    "workoutTracker.selectedHistoryExercise",
+    ""
+  );
   const [historySortOrder, setHistorySortOrder] = useLocalStorage(
     "workoutTracker.historySortOrder",
     "newest"
@@ -310,10 +314,9 @@ export default function App() {
         if (!hasValidVariation) return false;
       }
 
-      // Check search term
-      if (historySearchTerm.trim() !== "") {
-        const searchLower = historySearchTerm.toLowerCase();
-        if (!workout.exercise.toLowerCase().includes(searchLower)) return false;
+      // Check exercise filter
+      if (selectedHistoryExercise.trim() !== "") {
+        if (workout.exercise !== selectedHistoryExercise) return false;
       }
 
       // Check split filter
@@ -332,7 +335,7 @@ export default function App() {
       return historySortOrder === "newest" ? bTime - aTime : aTime - bTime;
     });
 
-    // Group by split then exercise
+    // Group by split then exercise, only including non-empty splits
     return sorted.reduce((acc, workout) => {
       const workoutSplit = EXERCISE_CATEGORY[workout.exercise] || workout.split || "Other";
       if (!acc[workoutSplit]) acc[workoutSplit] = {};
@@ -341,7 +344,7 @@ export default function App() {
       acc[workoutSplit][workout.exercise].push(workout);
       return acc;
     }, {});
-  }, [selectedHistoryVariationFilters, historySearchTerm, historySortOrder, selectedHistorySplits, workouts]);
+  }, [selectedHistoryVariationFilters, selectedHistoryExercise, historySortOrder, selectedHistorySplits, workouts]);
 
   const recentWorkouts = useMemo(
     () => workouts.filter((workout) => isWithinLastHours(workout.createdAt, 24)),
@@ -918,26 +921,28 @@ export default function App() {
             </div>
 
             <HistoryFilters
-              searchTerm={historySearchTerm}
-              setSearchTerm={setHistorySearchTerm}
-              sortOrder={historySortOrder}
-              setSortOrder={setHistorySortOrder}
               selectedSplits={selectedHistorySplits}
               setSelectedSplits={setSelectedHistorySplits}
+              selectedExercise={selectedHistoryExercise}
+              setSelectedExercise={setSelectedHistoryExercise}
+              sortOrder={historySortOrder}
+              setSortOrder={setHistorySortOrder}
             />
 
             <div className="history-grid">
               {[
                 ...PRIMARY_SPLITS,
                 ...(filteredGroupedHistory?.Other ? ["Other"] : []),
-              ].map((workoutSplit) => (
-                <section className="history-column" key={workoutSplit}>
-                  <h3>{workoutSplit === "Other" ? "Uncategorized" : workoutSplit}</h3>
-                  {Object.entries(filteredGroupedHistory?.[workoutSplit] ?? {})
-                    .sort(([a], [b]) => a.localeCompare(b))
-                    .map(([workoutExercise, items]) => {
-                      const key = `${workoutSplit}-${workoutExercise}`;
-                      const isCollapsed = collapsed[key] ?? true;
+              ]
+                .filter((split) => filteredGroupedHistory?.[split])
+                .map((workoutSplit) => (
+                  <section className="history-column" key={workoutSplit}>
+                    <h3>{workoutSplit === "Other" ? "Uncategorized" : workoutSplit}</h3>
+                    {Object.entries(filteredGroupedHistory?.[workoutSplit] ?? {})
+                      .sort(([a], [b]) => a.localeCompare(b))
+                      .map(([workoutExercise, items]) => {
+                        const key = `${workoutSplit}-${workoutExercise}`;
+                        const isCollapsed = collapsed[key] ?? true;
 
                       return (
                         <div className="history-group" key={workoutExercise}>

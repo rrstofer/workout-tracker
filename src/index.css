@@ -632,86 +632,222 @@ label {
   border-bottom: 0;
 }
 
+/* History Filters - Mobile First */
 .filter-panel {
   display: grid;
-  gap: 16px;
-  margin-bottom: 18px;
+  gap: 12px;
+  margin-bottom: 16px;
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 8px;
   background: rgba(8, 13, 23, 0.52);
-  padding: 16px;
+  padding: 12px;
 }
 
-.filter-section {
-  display: grid;
-  gap: 10px;
-}
-
-.filter-section span {
-  color: #cbd5e1;
-  font-size: 0.84rem;
-  font-weight: 800;
-}
-
-.search-input {
-  width: 100%;
-  min-height: 44px;
-  border: 1px solid rgba(148, 163, 184, 0.24);
-  border-radius: 8px;
-  background: rgba(8, 13, 23, 0.74);
-  color: #f8fbff;
-  font-size: 16px;
-  padding: 0.7rem 0.85rem;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-}
-
-.split-checkboxes {
-  display: grid;
-  gap: 8px;
-}
-
-.filter-checkbox {
+/* Split Type Filter - Compact Row */
+.split-filter-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  flex-wrap: wrap;
+}
+
+.filter-label {
+  color: #cbd5e1;
+  font-size: 0.75rem;
+  font-weight: 800;
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.split-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.split-btn {
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 6px;
   background: rgba(15, 23, 42, 0.7);
   color: #cbd5e1;
+  font-size: 0.75rem;
   font-weight: 700;
   cursor: pointer;
   transition: all 0.2s;
-  text-align: left;
+  white-space: nowrap;
 }
 
-.filter-checkbox:hover {
+.split-btn:hover {
   background: rgba(15, 23, 42, 0.9);
   border-color: rgba(148, 163, 184, 0.32);
 }
 
-.filter-checkbox.active {
+.split-btn.active {
   background: linear-gradient(135deg, rgba(103, 232, 249, 0.22), rgba(167, 139, 250, 0.2));
   border-color: rgba(103, 232, 249, 0.42);
   color: #f8fbff;
 }
 
-.checkbox-check {
+/* Exercise Autocomplete */
+.exercise-search {
+  display: grid;
+  gap: 6px;
+}
+
+.autocomplete-wrapper {
+  position: relative;
+}
+
+.autocomplete-input-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.autocomplete-input {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 6px;
+  background: rgba(8, 13, 23, 0.74);
+  color: #f8fbff;
+  font-size: 15px;
+  padding: 8px 36px 8px 12px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.autocomplete-input::placeholder {
+  color: #7d8ba0;
+}
+
+.clear-btn {
+  position: absolute;
+  right: 10px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  color: #94a3b8;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
-  background: transparent;
-  color: transparent;
-  font-size: 12px;
-  font-weight: bold;
 }
 
-.filter-checkbox.active .checkbox-check {
-  background: rgba(103, 232, 249, 0.3);
-  color: #67e8f9;
+.clear-btn:hover {
+  color: #cbd5e1;
+}
+
+.autocomplete-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: rgba(8, 13, 23, 0.95);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 10;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4);
+}
+
+.autocomplete-option {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  color: #cbd5e1;
+  text-align: left;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.autocomplete-option:hover {
+  background: rgba(103, 232, 249, 0.15);
+  color: #f8fbff;
+}
+
+/* Variations & Sort Row */
+.variations-sort-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.variations-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sort-divider {
+  width: 1px;
+  height: 28px;
+  background: rgba(148, 163, 184, 0.2);
+}
+
+.sort-group {
+  display: flex;
+  align-items: center;
+}
+
+.sort-btn {
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.7);
+  color: #cbd5e1;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.sort-btn:hover {
+  background: rgba(15, 23, 42, 0.9);
+  border-color: rgba(148, 163, 184, 0.32);
+}
+
+/* Tablet & Desktop */
+@media (min-width: 768px) {
+  .filter-panel {
+    gap: 14px;
+    padding: 14px;
+  }
+
+  .split-filter-row {
+    gap: 12px;
+  }
+
+  .split-btn {
+    min-height: 36px;
+    padding: 8px 12px;
+    font-size: 0.8rem;
+  }
+
+  .autocomplete-input {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .sort-btn {
+    min-height: 36px;
+    padding: 8px 12px;
+    font-size: 0.8rem;
+  }
 }
 
 @media (max-width: 980px) {

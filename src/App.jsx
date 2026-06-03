@@ -3,6 +3,7 @@ import { db } from "./firebase";
 import {
   collection,
   addDoc,
+  updateDoc,
   orderBy,
   query,
   serverTimestamp,
@@ -21,169 +22,80 @@ import {
   ResponsiveContainer,
 } from "recharts";
 // import { importCSV } from "./importWorkouts";
+import {
+  ALL_EXERCISES,
+  EQUIPMENT,
+  EXERCISE_CATEGORY,
+  EXERCISE_MAP,
+  HISTORY_FILTERS,
+  PRIMARY_SPLITS,
+  TEMPLATE_SPLITS,
+  TRACKER_SPLITS,
+  USERS,
+  VARIATIONS,
+} from "./data/workoutConfig";
+import { ChartTooltip } from "./components/ChartTooltip";
+import { TrackerSidePanel } from "./components/TrackerSidePanel";
+import { Toast } from "./components/Toast";
+import { useLocalStorage } from "./hooks/useLocalStorage";
+import {
+  emptyForm,
+  formatDate,
+  getDateKey,
+  getLocalDateKey,
+  getSplitForWorkout,
+  isWithinLastHours,
+  normalizeVariations,
+  titleCaseUser,
+} from "./utils/workoutUtils";
 
 const workoutsRef = collection(db, "workouts");
 
-const USERS = ["ryan", "tuna"];
-const VARIATIONS = ["Incline", "Decline", "Unilateral"];
-const HISTORY_FILTERS = ["All", "Standard", ...VARIATIONS];
-const EQUIPMENT = ["Barbell", "Dumbbell", "Cable", "Machine", "Smith Machine"];
-const TRACKER_SPLITS = ["Upper", "Lower", "Push", "Pull", "Legs", "Core"];
-const TEMPLATE_SPLITS = ["Push", "Pull", "Legs", "Upper", "Lower", "Core"];
-const PRIMARY_SPLITS = ["Push", "Pull", "Legs", "Core"];
-
-const EXERCISE_MAP = {
-  Push: [
-    "Bench Press",
-    "Shoulder Press",
-    "Fly",
-    "Bottom Up Fly",
-    "Lateral Raise",
-    "Tricep Pushdown",
-    "Overhead Tricep Extension",
-  ],
-  Pull: [
-    "Pull Up",
-    "Lat Pulldown",
-    "Lat Pullover",
-    "Row",
-    "T-Bar Row",
-    "Rear Delt Fly",
-    "Bicep Curl",
-    "Hammer Curl",
-  ],
-  Legs: [
-    "Squat",
-    "Hack Squat",
-    "Deadlift",
-    "Romanian Deadlift",
-    "Leg Press",
-    "Hip Thrust",
-    "Leg Curl",
-    "Leg Extension",
-    "Calf Raise",
-    "Seated Calf Raise",
-  ],
-  Upper: [
-    "Bench Press",
-    "Shoulder Press",
-    "Fly",
-    "Bottom Up Fly",
-    "Lateral Raise",
-    "Tricep Pushdown",
-    "Overhead Tricep Extension",
-    "Pull Up",
-    "Lat Pulldown",
-    "Lat Pullover",
-    "Row",
-    "T-Bar Row",
-    "Rear Delt Fly",
-    "Bicep Curl",
-    "Hammer Curl",
-  ],
-  Lower: [
-    "Squat",
-    "Hack Squat",
-    "Deadlift",
-    "Romanian Deadlift",
-    "Leg Press",
-    "Hip Thrust",
-    "Leg Curl",
-    "Leg Extension",
-    "Calf Raise",
-    "Seated Calf Raise",
-  ],
-  Core: [
-    "Cable Crunch",
-    "Hanging Leg Raise",
-    "Captain's Chair",
-    "Ab Crunch Machine",
-    "Plank",
-    "Side Plank",
-    "Pallof Press",
-    "Russian Twist",
-    "Back Extension",
-  ],
-};
-
-const EXERCISE_CATEGORY = Object.entries(EXERCISE_MAP).reduce((acc, [split, exercises]) => {
-  if (PRIMARY_SPLITS.includes(split)) {
-    exercises.forEach((exercise) => {
-      acc[exercise] = split;
-    });
-  }
-
-  return acc;
-}, {});
-
-const ALL_EXERCISES = Array.from(new Set(Object.values(EXERCISE_MAP).flat())).sort();
-
-const titleCaseUser = (user) => user.charAt(0).toUpperCase() + user.slice(1);
-
-const normalizeVariations = (value) => {
-  if (!value) return [];
-  if (Array.isArray(value)) return value;
-  return String(value)
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-};
-
-const formatDate = (createdAt) =>
-  createdAt?.seconds ? new Date(createdAt.seconds * 1000).toLocaleDateString() : "No date";
-
-const getDateKey = (createdAt) => {
-  if (!createdAt?.seconds) return "";
-  return getLocalDateKey(new Date(createdAt.seconds * 1000));
-};
-
-const getLocalDateKey = (date) => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
-
-const getSplitForWorkout = (workout) =>
-  EXERCISE_CATEGORY[workout.exercise] || workout.split || "Other";
-
-const CustomTooltip = ({ active, payload }) => {
-  if (!active || !payload?.length) return null;
-
-  const data = payload[0].payload;
-
-  return (
-    <div className="chart-tooltip">
-      <strong>{data.date}</strong>
-      <span>{data.weight} lbs</span>
-      <span>{data.reps}</span>
-      {data.notes && <span>{data.notes}</span>}
-    </div>
-  );
-};
-
 export default function App() {
-  const [activeView, setActiveView] = useState("Tracker");
-  const [user, setUser] = useState("ryan");
+  const [activeView, setActiveView] = useLocalStorage("workoutTracker.activeView", "Tracker");
+  const [user, setUser] = useLocalStorage("workoutTracker.user", "ryan");
   const [workouts, setWorkouts] = useState([]);
 
-  const [split, setSplit] = useState("");
-  const [exercise, setExercise] = useState("");
-  const [customExercise, setCustomExercise] = useState("");
-  const [equipment, setEquipment] = useState("");
-  const [weight, setWeight] = useState("");
-  const [variations, setVariations] = useState([]);
-  const [sets, setSets] = useState(["", "", "", ""]);
-  const [notes, setNotes] = useState("");
-
-  const [progressExercise, setProgressExercise] = useState("");
-  const [progressEquipment, setProgressEquipment] = useState("");
-  const [progressVariations, setProgressVariations] = useState([]);
-  const [templateSplit, setTemplateSplit] = useState("Push");
-  const [selectedHistoryVariationFilters, setSelectedHistoryVariationFilters] = useState([]);
+  const [formDrafts, setFormDrafts] = useLocalStorage("workoutTracker.formDrafts", {});
+  const [progressExercise, setProgressExercise] = useLocalStorage(
+    "workoutTracker.progressExercise",
+    ""
+  );
+  const [progressEquipment, setProgressEquipment] = useLocalStorage(
+    "workoutTracker.progressEquipment",
+    ""
+  );
+  const [progressVariations, setProgressVariations] = useLocalStorage(
+    "workoutTracker.progressVariations",
+    []
+  );
+  const [templateSplit, setTemplateSplit] = useLocalStorage("workoutTracker.templateSplit", "Push");
+  const [selectedHistoryVariationFilters, setSelectedHistoryVariationFilters] = useLocalStorage(
+    "workoutTracker.historyFilters",
+    []
+  );
   const [collapsed, setCollapsed] = useState({});
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [selectedHeatmapDay, setSelectedHeatmapDay] = useState(null);
+  const [editingWorkoutId, setEditingWorkoutId] = useLocalStorage(
+    "workoutTracker.editingWorkoutId",
+    null
+  );
+  const [toastMessage, setToastMessage] = useState("");
+
+  const formDraft = formDrafts[user] || emptyForm;
+  const setFormDraft = (updater) => {
+    setFormDrafts((current) => {
+      const currentDraft = current[user] || emptyForm;
+      const nextDraft = typeof updater === "function" ? updater(currentDraft) : updater;
+
+      return {
+        ...current,
+        [user]: nextDraft,
+      };
+    });
+  };
+  const { split, exercise, customExercise, equipment, weight, variations, sets, notes } = formDraft;
 
   useEffect(() => {
     const q = query(workoutsRef, where("user", "==", user), orderBy("createdAt", "desc"));
@@ -396,9 +308,38 @@ export default function App() {
     }, {});
   }, [selectedHistoryVariationFilters, workouts]);
 
+  const recentWorkouts = useMemo(
+    () => workouts.filter((workout) => isWithinLastHours(workout.createdAt, 24)),
+    [workouts]
+  );
+
+  useEffect(() => {
+    if (!toastMessage) return undefined;
+
+    const timeoutId = window.setTimeout(() => setToastMessage(""), 2800);
+    return () => window.clearTimeout(timeoutId);
+  }, [toastMessage]);
+
+  const updateDraftField = (field, value) => {
+    setFormDraft((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  };
+
+  const toggleDraftVariation = (variation) => {
+    setFormDraft((current) => ({
+      ...current,
+      variations: current.variations.includes(variation)
+        ? current.variations.filter((item) => item !== variation)
+        : [...current.variations, variation],
+    }));
+  };
+
   const toggleUser = () => {
     setUser(nextUser);
     setConfirmDelete(null);
+    setEditingWorkoutId(null);
   };
 
   const toggleArrayValue = (value, setter) => {
@@ -438,26 +379,22 @@ export default function App() {
   };
 
   const updateSet = (index, value) => {
-    setSets((current) => current.map((item, itemIndex) => (itemIndex === index ? value : item)));
+    setFormDraft((current) => ({
+      ...current,
+      sets: current.sets.map((item, itemIndex) => (itemIndex === index ? value : item)),
+    }));
   };
 
   const resetForm = () => {
-    setSplit("");
-    setExercise("");
-    setCustomExercise("");
-    setEquipment("");
-    setWeight("");
-    setVariations([]);
-    setSets(["", "", "", ""]);
-    setNotes("");
+    setFormDraft(emptyForm);
+    setEditingWorkoutId(null);
   };
 
   const addWorkout = async (event) => {
     event.preventDefault();
 
     const completedSets = sets.filter((set) => set !== "").map(Number);
-
-    await addDoc(workoutsRef, {
+    const workoutPayload = {
       user,
       split,
       exercise: resolvedExercise,
@@ -466,8 +403,21 @@ export default function App() {
       weight: Number(weight),
       sets: completedSets,
       notes,
-      createdAt: serverTimestamp(),
-    });
+    };
+
+    if (editingWorkoutId) {
+      await updateDoc(doc(db, "workouts", editingWorkoutId), {
+        ...workoutPayload,
+        updatedAt: serverTimestamp(),
+      });
+      setToastMessage("Workout updated");
+    } else {
+      await addDoc(workoutsRef, {
+        ...workoutPayload,
+        createdAt: serverTimestamp(),
+      });
+      setToastMessage("Workout logged");
+    }
 
     resetForm();
   };
@@ -475,20 +425,48 @@ export default function App() {
   const applyTemplateRecommendation = (recommendation) => {
     const isListedExercise = EXERCISE_MAP[templateSplit]?.includes(recommendation.exercise);
 
-    setSplit(templateSplit);
-    setExercise(isListedExercise ? recommendation.exercise : "__custom__");
-    setCustomExercise(isListedExercise ? "" : recommendation.exercise);
-    setEquipment(recommendation.equipment);
-    setVariations([]);
+    setFormDraft((current) => ({
+      ...current,
+      split: templateSplit,
+      exercise: isListedExercise ? recommendation.exercise : "__custom__",
+      customExercise: isListedExercise ? "" : recommendation.exercise,
+      equipment: recommendation.equipment,
+      variations: [],
+    }));
     setActiveView("Tracker");
+  };
+
+  const editWorkout = (workout) => {
+    const splitForWorkout = workout.split || getSplitForWorkout(workout);
+    const isListedExercise = EXERCISE_MAP[splitForWorkout]?.includes(workout.exercise);
+
+    setFormDraft({
+      split: splitForWorkout === "Other" ? "Core" : splitForWorkout,
+      exercise: isListedExercise ? workout.exercise : "__custom__",
+      customExercise: isListedExercise ? "" : workout.exercise,
+      equipment: workout.equipment || "",
+      weight: workout.weight ? String(workout.weight) : "",
+      variations: normalizeVariations(workout.variations),
+      sets: Array.from({ length: 4 }, (_, index) =>
+        workout.sets?.[index] === undefined ? "" : String(workout.sets[index])
+      ),
+      notes: workout.notes || "",
+    });
+    setEditingWorkoutId(workout.id);
+    setActiveView("Tracker");
+    setToastMessage("Editing recent workout");
   };
 
   const deleteWorkout = async (id) => {
     await deleteDoc(doc(db, "workouts", id));
+    setConfirmDelete(null);
+    if (editingWorkoutId === id) resetForm();
+    setToastMessage("Workout deleted");
   };
 
   return (
     <main className="app-shell">
+      <Toast message={toastMessage} />
       <section className="topbar">
         <div>
           <p className="eyebrow">Workout log</p>
@@ -589,8 +567,12 @@ export default function App() {
                 <select
                   value={split}
                   onChange={(event) => {
-                    setSplit(event.target.value);
-                    setExercise("");
+                    setFormDraft((current) => ({
+                      ...current,
+                      split: event.target.value,
+                      exercise: "",
+                      customExercise: "",
+                    }));
                   }}
                   required
                 >
@@ -607,7 +589,7 @@ export default function App() {
                 <span>Exercise</span>
                 <select
                   value={exercise}
-                  onChange={(event) => setExercise(event.target.value)}
+                  onChange={(event) => updateDraftField("exercise", event.target.value)}
                   disabled={!split}
                   required
                 >
@@ -628,7 +610,7 @@ export default function App() {
                     placeholder="Abs, carries, mobility, or anything else"
                     type="text"
                     value={customExercise}
-                    onChange={(event) => setCustomExercise(event.target.value)}
+                    onChange={(event) => updateDraftField("customExercise", event.target.value)}
                     required
                   />
                 </label>
@@ -638,7 +620,7 @@ export default function App() {
                 <span>Equipment</span>
                 <select
                   value={equipment}
-                  onChange={(event) => setEquipment(event.target.value)}
+                  onChange={(event) => updateDraftField("equipment", event.target.value)}
                   required
                 >
                   <option value="">Choose equipment</option>
@@ -656,7 +638,7 @@ export default function App() {
                   placeholder={lastWorkout?.weight ? `Last: ${lastWorkout.weight} lbs` : "Weight"}
                   type="number"
                   value={weight}
-                  onChange={(event) => setWeight(event.target.value)}
+                  onChange={(event) => updateDraftField("weight", event.target.value)}
                   required
                 />
               </label>
@@ -672,7 +654,7 @@ export default function App() {
                   className={variations.includes(variation) ? "chip active" : "chip"}
                   key={variation}
                   type="button"
-                  onClick={() => toggleArrayValue(variation, setVariations)}
+                  onClick={() => toggleDraftVariation(variation)}
                 >
                   {variation}
                 </button>
@@ -700,38 +682,23 @@ export default function App() {
               <textarea
                 placeholder="Tempo, form notes, pain flags, or anything worth remembering"
                 value={notes}
-                onChange={(event) => setNotes(event.target.value)}
+                onChange={(event) => updateDraftField("notes", event.target.value)}
               />
             </label>
 
             <button className="primary-button" type="submit">
-              Add workout
+              {editingWorkoutId ? "Save changes" : "Add workout"}
             </button>
           </form>
 
-          <aside className="panel last-panel">
-            <p className="eyebrow">Last matching session</p>
-            {lastWorkout ? (
-              <>
-                <h2>{lastWorkout.exercise}</h2>
-                <div className="last-metric">
-                  <strong>{lastWorkout.weight} lbs</strong>
-                  <span>{lastWorkout.sets?.join(" / ")} reps</span>
-                </div>
-                <p>{formatDate(lastWorkout.createdAt)}</p>
-                <p className="muted">
-                  {lastWorkout.variations?.length ? lastWorkout.variations.join(" / ") : "Standard"}
-                </p>
-              </>
-            ) : (
-              <>
-                <h2>No match yet</h2>
-                <p className="muted">
-                  Select an exercise, equipment, and attributes to see the exact previous numbers.
-                </p>
-              </>
-            )}
-          </aside>
+          <TrackerSidePanel
+            confirmDelete={confirmDelete}
+            deleteWorkout={deleteWorkout}
+            editWorkout={editWorkout}
+            lastWorkout={lastWorkout}
+            recentWorkouts={recentWorkouts}
+            setConfirmDelete={setConfirmDelete}
+          />
         </section>
       )}
 
@@ -863,7 +830,7 @@ export default function App() {
                     <CartesianGrid stroke="#263245" strokeDasharray="3 3" />
                     <XAxis dataKey="date" stroke="#94A3B8" tickLine={false} />
                     <YAxis stroke="#94A3B8" tickLine={false} width={42} />
-                    <Tooltip content={<CustomTooltip />} />
+                    <Tooltip content={<ChartTooltip />} />
                     <Area
                       type="monotone"
                       dataKey="weight"

@@ -1,5 +1,17 @@
 import { formatDate, formatPacificTime } from "../utils/workoutUtils";
 
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
+
+import { ChartTooltip } from "./ChartTooltip";
+
 export function TrackerSidePanel({
   confirmDelete,
   deleteWorkout,
@@ -7,32 +19,69 @@ export function TrackerSidePanel({
   lastWorkout,
   recentWorkouts,
   setConfirmDelete,
+  progressData,
 }) {
   return (
     <aside className="side-stack">
       <div className="panel last-panel">
-        <p className="eyebrow">Last matching session</p>
-        {lastWorkout ? (
-          <>
-            <h2>{lastWorkout.exercise}</h2>
-            <div className="last-metric">
-              <strong>{lastWorkout.weight} lbs</strong>
-              <span>{lastWorkout.sets?.join(" / ")} reps</span>
-            </div>
-            <p>{formatDate(lastWorkout.createdAt)}</p>
-            <p className="muted">
-              {lastWorkout.variations?.length ? lastWorkout.variations.join(" / ") : "Standard"}
-            </p>
-          </>
-        ) : (
-          <>
-            <h2>No match yet</h2>
-            <p className="muted">
-              Select an exercise, equipment, and attributes to see the exact previous numbers.
-            </p>
-          </>
-        )}
-      </div>
+      <p className="eyebrow">Progress</p>
+
+      {progressData?.length > 1 ? (
+        <>
+          <h2>Exercise Trend</h2>
+
+          <div className="side-chart">
+            <ResponsiveContainer width="100%" height={180}>
+              <AreaChart data={progressData}>
+                <defs>
+                  <linearGradient id="trackerGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#67E8F9" stopOpacity={0.7} />
+                    <stop offset="100%" stopColor="#34D399" stopOpacity={0.05} />
+                  </linearGradient>
+                </defs>
+
+                <CartesianGrid stroke="#263245" strokeDasharray="3 3" />
+                <XAxis dataKey="date" stroke="#94A3B8" hide />
+                <YAxis stroke="#94A3B8" width={30} />
+                <Tooltip content={<ChartTooltip />} />
+
+                <Area
+                  type="monotone"
+                  dataKey="weight"
+                  stroke="#67E8F9"
+                  strokeWidth={2}
+                  fill="url(#trackerGradient)"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </>
+      ) : lastWorkout ? (
+        <>
+          <h2>{lastWorkout.exercise}</h2>
+
+          <div className="last-metric">
+            <strong>{lastWorkout.weight} lbs</strong>
+            <span>{lastWorkout.sets?.join(" / ")} reps</span>
+          </div>
+
+          <p>{formatDate(lastWorkout.createdAt)}</p>
+
+          <p className="muted">
+            {lastWorkout.variations?.length
+              ? lastWorkout.variations.join(" / ")
+              : "Standard"}
+          </p>
+        </>
+      ) : (
+        <>
+          <h2>No data yet</h2>
+          <p className="muted">
+            Log this exercise to see your progress trend here.
+          </p>
+        </>
+      )}
+    </div>
 
       <div className="panel recent-panel">
         <p className="eyebrow">Last 24 hours</p>

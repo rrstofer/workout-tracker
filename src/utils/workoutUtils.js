@@ -1,4 +1,4 @@
-import { EXERCISE_CATEGORY } from "../data/workoutConfig";
+import { EXERCISE_CATEGORY, PRIMARY_SPLITS } from "../data/workoutConfig";
 
 export const emptyForm = {
   split: "",
@@ -55,6 +55,40 @@ export const getDateKey = (createdAt) => {
 
 export const getSplitForWorkout = (workout) =>
   EXERCISE_CATEGORY[workout.exercise] || workout.split || "Other";
+
+export const isHistorySplitFilterAll = (selectedSplits) =>
+  selectedSplits.length === 0 || selectedSplits.length === PRIMARY_SPLITS.length;
+
+export const getSplitForExercise = (exercise, workouts = []) => {
+  if (EXERCISE_CATEGORY[exercise]) {
+    return EXERCISE_CATEGORY[exercise];
+  }
+
+  const matches = workouts.filter((workout) => workout.exercise === exercise);
+  if (matches.length === 0) {
+    return "Other";
+  }
+
+  const splitCounts = {};
+  matches.forEach((workout) => {
+    const split = getSplitForWorkout(workout);
+    splitCounts[split] = (splitCounts[split] || 0) + 1;
+  });
+
+  return Object.entries(splitCounts).sort((a, b) => b[1] - a[1])[0][0];
+};
+
+export const matchesHistorySplitFilter = (workoutSplit, selectedSplits) =>
+  isHistorySplitFilterAll(selectedSplits) || selectedSplits.includes(workoutSplit);
+
+export const exerciseMatchesHistorySplits = (exercise, selectedSplits, workouts = []) => {
+  if (isHistorySplitFilterAll(selectedSplits)) {
+    return true;
+  }
+
+  const exerciseSplit = getSplitForExercise(exercise, workouts);
+  return selectedSplits.includes(exerciseSplit);
+};
 
 export const isWithinLastHours = (createdAt, hours) => {
   const date = timestampToDate(createdAt);

@@ -1,5 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-import { PRIMARY_SPLITS, ALL_EXERCISES } from "../data/workoutConfig";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ALL_EXERCISES, PRIMARY_SPLITS } from "../data/workoutConfig";
+import {
+  exerciseMatchesHistorySplits,
+  getSplitForExercise,
+  isHistorySplitFilterAll,
+} from "../utils/workoutUtils";
 
 export function HistoryFilters({
   selectedSplits,
@@ -8,42 +13,63 @@ export function HistoryFilters({
   setSelectedExercise,
   sortOrder,
   setSortOrder,
+  selectedVariationFilters,
+  toggleVariationFilter,
+  availableVariations,
+  workouts,
 }) {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [filteredExercises, setFilteredExercises] = useState([]);
   const [inputValue, setInputValue] = useState(selectedExercise);
   const dropdownRef = useRef(null);
 
-  const toggleSplit = (split) => {
-    setSelectedSplits((current) =>
-      current.includes(split)
-        ? current.filter((item) => item !== split)
-        : [...current, split]
-    );
-  };
+  const searchableExercises = useMemo(
+    () =>
+      Array.from(
+        new Set([...ALL_EXERCISES, ...workouts.map((workout) => workout.exercise)])
+      )
+        .filter(Boolean)
+        .sort(),
+    [workouts]
+  );
 
-  const toggleAllSplits = () => {
-    if (selectedSplits.length === PRIMARY_SPLITS.length) {
-      setSelectedSplits([]);
-    } else {
-      setSelectedSplits([...PRIMARY_SPLITS]);
+  const filterExercisesByQuery = (value) => {
+    const query = value.trim().toLowerCase();
+    if (!query) {
+      return [];
     }
+
+    return searchableExercises.filter((exercise) => {
+      if (!exercise.toLowerCase().includes(query)) {
+        return false;
+      }
+
+      return exerciseMatchesHistorySplits(exercise, selectedSplits, workouts);
+    });
   };
 
-  const handleInputChange = (e) => {
-    const value = e.target.value;
+  const selectSplit = (split) => {
+    setSelectedSplits((current) => {
+      if (!isHistorySplitFilterAll(current) && current.length === 1 && current[0] === split) {
+        return [];
+      }
+      return [split];
+    });
+    setIsDropdownOpen(false);
+  };
+
+  const selectAllSplits = () => {
+    setSelectedSplits([]);
+    setIsDropdownOpen(false);
+  };
+
+  const handleInputChange = (event) => {
+    const value = event.target.value;
     setInputValue(value);
 
-    if (value.trim() === "") {
-      setFilteredExercises([]);
-      setIsDropdownOpen(false);
-    } else {
-      const filtered = ALL_EXERCISES.filter((exercise) =>
-        exercise.toLowerCase().includes(value.toLowerCase())
-      );
-      setFilteredExercises(filtered);
-      setIsDropdownOpen(filtered.length > 0);
-    }
+    const filtered = filterExercisesByQuery(value);
+    setFilteredExercises(filtered);
+    setIsDropdownOpen(filtered.length > 0);
   };
 
   const selectExercise = (exercise) => {
@@ -57,6 +83,7 @@ export function HistoryFilters({
     setSelectedExercise("");
     setInputValue("");
     setFilteredExercises([]);
+    setIsDropdownOpen(false);
   };
 
   useEffect(() => {
@@ -74,16 +101,40 @@ export function HistoryFilters({
     setInputValue(selectedExercise);
   }, [selectedExercise]);
 
+  useEffect(() => {
+    if (!selectedExercise) {
+      return;
+    }
+
+    if (!exerciseMatchesHistorySplits(selectedExercise, selectedSplits, workouts)) {
+      setSelectedExercise("");
+      setInputValue("");
+      setFilteredExercises([]);
+      setIsDropdownOpen(false);
+    }
+  }, [selectedSplits, selectedExercise, setSelectedExercise, workouts]);
+
+  useEffect(() => {
+    if (!inputValue.trim() || selectedExercise === inputValue) {
+      return;
+    }
+
+    const filtered = filterExercisesByQuery(inputValue);
+    setFilteredExercises(filtered);
+    setIsDropdownOpen(filtered.length > 0);
+  }, [selectedSplits, workouts]);
+
+  const allSplitsActive = isHistorySplitFilterAll(selectedSplits);
+
   return (
     <div className="filter-panel">
-      {/* Split Type Filter - Compact */}
       <div className="split-filter-row">
         <span className="filter-label">Type:</span>
         <div className="split-buttons">
           <button
             type="button"
-            className={`split-btn ${selectedSplits.length === PRIMARY_SPLITS.length ? "active" : ""}`}
-            onClick={toggleAllSplits}
+            className={`split-btn ${allSplitsActive ? "active" : ""}`}
+            onClick={selectAllSplits}
           >
             All
           </button>
@@ -91,8 +142,10 @@ export function HistoryFilters({
             <button
               key={split}
               type="button"
-              className={`split-btn ${selectedSplits.includes(split) ? "active" : ""}`}
-              onClick={() => toggleSplit(split)}
+              className={`split-btn ${
+                !allSplitsActive && selectedSplits.includes(split) ? "active" : ""
+              }`}
+              onClick={() => selectSplit(split)}
             >
               {split}
             </button>
@@ -100,22 +153,27 @@ export function HistoryFilters({
         </div>
       </div>
 
-      {/* Exercise Autocomplete */}
       <div className="exercise-search">
         <span className="filter-label">Exercise:</span>
         <div className="autocomplete-wrapper" ref={dropdownRef}>
           <div className="autocomplete-input-group">
             <input
               type="text"
-              placeholder="Type to search..."
+              placeholder={
+                allSplitsActive
+                  ? "Type to search exercises..."
+                  : `Search ${selectedSplits[0]} exercises...`
+              }
               value={inputValue}
               onChange={handleInputChange}
               onFocus={() => {
-                if (filteredExercises.length > 0) {
-                  setIsDropdownOpen(true);
-                }
+                const filtered = filterExercisesByQuery(inputValue);
+                setFilteredExercises(filtered);
+                setIsDropdownOpen(filtered.length > 0);
               }}
               className="autocomplete-input"
+              autoComplete="off"
+              enterKeyHint="search"
             />
             {selectedExercise && (
               <button
@@ -139,6 +197,11 @@ export function HistoryFilters({
                   onClick={() => selectExercise(exercise)}
                 >
                   {exercise}
+                  {!allSplitsActive && (
+                    <small className="autocomplete-option-meta">
+                      {getSplitForExercise(exercise, workouts)}
+                    </small>
+                  )}
                 </button>
               ))}
             </div>
@@ -146,36 +209,45 @@ export function HistoryFilters({
         </div>
       </div>
 
-      {/* Variation Filters & Sort - Together with Separator */}
       <div className="variations-sort-row">
-        <div className="variations-group">
+        <div className="variations-toolbar">
           <span className="filter-label">Variations:</span>
-          {["All", "Standard", "Incline", "Decline", "Unilateral"].map((filter) => (
-            <button
-              key={filter}
-              type="button"
-              className="chip"
-              disabled
-            >
-              {filter}
-            </button>
-          ))}
-        </div>
-
-        <div className="sort-divider"></div>
-
-        <div className="sort-group">
           <button
             type="button"
             className="sort-btn"
             onClick={() => setSortOrder(sortOrder === "newest" ? "oldest" : "newest")}
             title={`Click to sort ${sortOrder === "newest" ? "oldest" : "newest"} first`}
+            aria-label={`Sort ${sortOrder === "newest" ? "oldest" : "newest"} first`}
           >
-            {sortOrder === "newest" ? "↓ Newest" : "↑ Oldest"}
+            <span className="sort-btn-short">{sortOrder === "newest" ? "↓ Newest" : "↑ Oldest"}</span>
+            <span className="sort-btn-long">
+              {sortOrder === "newest" ? "↓ Newest" : "↑ Oldest"}
+            </span>
           </button>
+        </div>
+
+        <div className="variation-chips">
+          {["All", "Standard", "Incline", "Decline", "Unilateral"].map((filter) => {
+            const isActive =
+              (filter === "All" && selectedVariationFilters.length === 0) ||
+              selectedVariationFilters.includes(filter);
+
+            const isAvailable = filter === "All" || availableVariations.includes(filter);
+
+            return (
+              <button
+                key={filter}
+                type="button"
+                disabled={!isAvailable}
+                className={`chip ${isActive ? "active" : ""}`}
+                onClick={() => toggleVariationFilter(filter)}
+              >
+                {filter}
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>
   );
 }
-

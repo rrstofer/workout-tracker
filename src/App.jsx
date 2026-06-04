@@ -25,9 +25,7 @@ import {
 import {
   ALL_EXERCISES,
   EQUIPMENT,
-  EXERCISE_CATEGORY,
   EXERCISE_MAP,
-  HISTORY_FILTERS,
   PRIMARY_SPLITS,
   TEMPLATE_SPLITS,
   TRACKER_SPLITS,
@@ -45,8 +43,11 @@ import {
   formatPacificTime,
   getDateKey,
   getLocalDateKey,
+  getSplitForExercise,
   getSplitForWorkout,
+  isHistorySplitFilterAll,
   isWithinLastHours,
+  matchesHistorySplitFilter,
   normalizeVariations,
   titleCaseUser,
 } from "./utils/workoutUtils";
@@ -76,10 +77,6 @@ export default function App() {
     "workoutTracker.historyFilters",
     []
   );
-  const [historySearchTerm, setHistorySearchTerm] = useLocalStorage(
-    "workoutTracker.historySearchTerm",
-    ""
-  );
   const [selectedHistoryExercise, setSelectedHistoryExercise] = useLocalStorage(
     "workoutTracker.selectedHistoryExercise",
     ""
@@ -90,9 +87,8 @@ export default function App() {
   );
   const [selectedHistorySplits, setSelectedHistorySplits] = useLocalStorage(
     "workoutTracker.selectedHistorySplits",
-    [...PRIMARY_SPLITS]
+    []
   );
-  const [collapsed, setCollapsed] = useState({});
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [selectedHeatmapDay, setSelectedHeatmapDay] = useState(null);
   const [editingWorkoutId, setEditingWorkoutId] = useLocalStorage(
@@ -180,7 +176,34 @@ export default function App() {
         );
       }) || null
     );
-  }, [equipment, resolvedExercise, variations, workouts]);
+    }, [equipment, resolvedExercise, variations, workouts]);
+
+    const trackerProgressData = useMemo(() => {
+    if (!resolvedExercise || !equipment) return [];
+
+    return workouts
+      .filter((workout) => {
+        if (workout.exercise !== resolvedExercise) return false;
+        if (workout.equipment !== equipment) return false;
+
+        const workoutVariations = normalizeVariations(workout.variations);
+
+        return variations.every((variation) =>
+          workoutVariations.includes(variation)
+        );
+      })
+      .sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0))
+      .map((workout) => ({
+        date: formatDate(workout.createdAt),
+        weight: workout.weight,
+        reps: Array.isArray(workout.sets) ? workout.sets.join(" / ") : "",
+      }));
+  }, [
+    workouts,
+    resolvedExercise,
+    equipment,
+    variations,
+  ]);
 
   const heatmapDays = useMemo(() => {
     const countsByDay = workouts.reduce((acc, workout) => {
@@ -319,9 +342,11 @@ export default function App() {
         if (workout.exercise !== selectedHistoryExercise) return false;
       }
 
-      // Check split filter
-      const workoutSplit = EXERCISE_CATEGORY[workout.exercise] || workout.split || "Other";
-      if (!selectedHistorySplits.includes(workoutSplit)) return false;
+      const workoutSplit = getSplitForWorkout(workout);
+
+      if (!matchesHistorySplitFilter(workoutSplit, selectedHistorySplits)) {
+        return false;
+      }
 
       return true;
     };
@@ -337,7 +362,7 @@ export default function App() {
 
     // Group by split then exercise, only including non-empty splits
     return sorted.reduce((acc, workout) => {
-      const workoutSplit = EXERCISE_CATEGORY[workout.exercise] || workout.split || "Other";
+      const workoutSplit = getSplitForWorkout(workout);
       if (!acc[workoutSplit]) acc[workoutSplit] = {};
       if (!acc[workoutSplit][workout.exercise]) acc[workoutSplit][workout.exercise] = [];
 
@@ -345,6 +370,79 @@ export default function App() {
       return acc;
     }, {});
   }, [selectedHistoryVariationFilters, selectedHistoryExercise, historySortOrder, selectedHistorySplits, workouts]);
+
+  const availableVariations = useMemo(() => {
+    if (!selectedHistoryExercise.trim()) {
+      return [];
+    }
+
+    return [
+      ...new Set(
+        workouts
+          .filter(
+            (workout) =>
+              workout.exercise === selectedHistoryExercise
+          )
+          .flatMap((workout) => {
+            const variations = normalizeVariations(
+              workout.variations
+            );
+
+            return variations.length
+              ? variations
+              : ["Standard"];
+          })
+      ),
+    ];
+  }, [workouts, selectedHistoryExercise]);
+
+  const historyTimeline = useMemo(() => {
+    if (!selectedHistoryExercise.trim()) {
+      return [];
+    }
+
+    const filtered = workouts.filter((workout) => {
+      if (workout.exercise !== selectedHistoryExercise) {
+        return false;
+      }
+
+      if (selectedHistoryVariationFilters.length > 0) {
+        const workoutVariations = normalizeVariations(
+          workout.variations
+        );
+
+        const hasValidVariation =
+          selectedHistoryVariationFilters.every((filter) => {
+            if (filter === "Standard") {
+              return workoutVariations.length === 0;
+            }
+
+            return workoutVariations.includes(filter);
+          });
+
+        if (!hasValidVariation) {
+          return false;
+        }
+      }
+
+      return matchesHistorySplitFilter(getSplitForWorkout(workout), selectedHistorySplits);
+    });
+
+    return filtered.sort((a, b) => {
+      const aTime = a.createdAt?.seconds || 0;
+      const bTime = b.createdAt?.seconds || 0;
+
+      return historySortOrder === "newest"
+        ? bTime - aTime
+        : aTime - bTime;
+    });
+  }, [
+    workouts,
+    selectedHistoryExercise,
+    selectedHistoryVariationFilters,
+    selectedHistorySplits,
+    historySortOrder,
+  ]);
 
   const recentWorkouts = useMemo(
     () => workouts.filter((workout) => isWithinLastHours(workout.createdAt, 24)),
@@ -407,13 +505,15 @@ export default function App() {
     });
   };
 
-  const toggleCollapse = (workoutSplit, workoutExercise) => {
-    const key = `${workoutSplit}-${workoutExercise}`;
+  const openHistoryExerciseDetail = (workoutSplit, workoutExercise) => {
+    setSelectedHistorySplits([workoutSplit]);
+    setSelectedHistoryExercise(workoutExercise);
+  };
 
-    setCollapsed((current) => ({
-      ...current,
-      [key]: !(current[key] ?? true),
-    }));
+  const backToHistoryOverview = () => {
+    setSelectedHistoryExercise("");
+    setSelectedHistorySplits([]);
+    setSelectedHistoryVariationFilters([]);
   };
 
   const updateSet = (index, value) => {
@@ -507,7 +607,7 @@ export default function App() {
       <Toast message={toastMessage} />
       <section className="topbar">
         <div>
-          <p className="eyebrow">Workout log</p>
+          <p className="eyebrow">Workout Tracker App</p>
           <h1>頑張れ！</h1>
         </div>
 
@@ -718,10 +818,19 @@ export default function App() {
             <label>
               <span>Notes</span>
               <textarea
-                placeholder="Tempo, form notes, pain flags, or anything worth remembering"
+                placeholder={
+                  lastWorkout?.notes
+                    ? `Last: ${lastWorkout.notes}`
+                    : "Tempo, form notes, pain flags, or anything worth remembering"
+                }
                 value={notes}
                 onChange={(event) => updateDraftField("notes", event.target.value)}
               />
+              {lastWorkout?.notes && (
+                <div className="muted ghost-hint">
+                  Last: {lastWorkout.notes}
+                </div>
+              )}
             </label>
 
             <button className="primary-button" type="submit">
@@ -736,6 +845,8 @@ export default function App() {
             lastWorkout={lastWorkout}
             recentWorkouts={recentWorkouts}
             setConfirmDelete={setConfirmDelete}
+            progressData={trackerProgressData}
+            resolvedExercise={resolvedExercise}
           />
         </section>
       )}
@@ -901,23 +1012,6 @@ export default function App() {
                 <p className="eyebrow">History</p>
                 <h2>Past sessions</h2>
               </div>
-              <div className="chip-group compact">
-                {HISTORY_FILTERS.map((filter) => (
-                  <button
-                    className={
-                      (filter === "All" && selectedHistoryVariationFilters.length === 0) ||
-                      selectedHistoryVariationFilters.includes(filter)
-                        ? "chip active"
-                        : "chip"
-                    }
-                    key={filter}
-                    type="button"
-                    onClick={() => toggleHistoryVariationFilter(filter)}
-                  >
-                    {filter}
-                  </button>
-                ))}
-              </div>
             </div>
 
             <HistoryFilters
@@ -927,8 +1021,123 @@ export default function App() {
               setSelectedExercise={setSelectedHistoryExercise}
               sortOrder={historySortOrder}
               setSortOrder={setHistorySortOrder}
+              selectedVariationFilters={selectedHistoryVariationFilters}
+              toggleVariationFilter={toggleHistoryVariationFilter}
+              availableVariations={availableVariations}
+              workouts={workouts}
             />
 
+            {selectedHistoryExercise ? (
+              <>
+              <div className="history-detail-header">
+                <button
+                  className="history-back-btn"
+                  type="button"
+                  onClick={backToHistoryOverview}
+                >
+                  ← All exercises
+                </button>
+                <div className="history-detail-title">
+                  <span className="history-detail-split">
+                    {isHistorySplitFilterAll(selectedHistorySplits)
+                      ? getSplitForExercise(selectedHistoryExercise, workouts)
+                      : selectedHistorySplits[0]}
+                  </span>
+                  <h3>{selectedHistoryExercise}</h3>
+                  <p className="muted">
+                    {historyTimeline.length} session
+                    {historyTimeline.length === 1 ? "" : "s"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="exercise-timeline">
+                {historyTimeline.length === 0 ? (
+                  <div className="empty-state">
+                    No sessions match these filters yet. Try another variation or split type.
+                  </div>
+                ) : (
+                  historyTimeline.map((workout) => {
+                    const timelineVariations = normalizeVariations(workout.variations);
+
+                    return (
+                  <article
+                    className="timeline-item"
+                    key={workout.id}
+                  >
+                    <div className="timeline-marker" />
+
+                    <div className="timeline-card">
+                      <span className="muted timeline-date">
+                        {formatDate(workout.createdAt)}
+                        {" • "}
+                        {formatPacificTime(workout.createdAt)} PST
+                      </span>
+
+                      <div className="timeline-stats">
+                        <h4>{workout.weight} lbs</h4>
+                        <strong className="timeline-sets">
+                          {workout.sets?.join(" / ")} reps
+                        </strong>
+                      </div>
+
+                      {(workout.equipment || timelineVariations.length > 0) && (
+                        <div className="timeline-tags">
+                          {workout.equipment && (
+                            <span className="timeline-tag">{workout.equipment}</span>
+                          )}
+                          {timelineVariations.map((variation) => (
+                            <span className="timeline-tag variation" key={variation}>
+                              {variation}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {workout.notes && (
+                        <p className="timeline-notes">{workout.notes}</p>
+                      )}
+
+                      <div className="workout-actions">
+                        <button
+                          className="ghost-button"
+                          type="button"
+                          onClick={() => editWorkout(workout)}
+                        >
+                          Edit
+                        </button>
+
+                        {confirmDelete === workout.id ? (
+                          <button
+                            className="danger-button"
+                            type="button"
+                            onClick={() => {
+                              deleteWorkout(workout.id);
+                              setConfirmDelete(null);
+                            }}
+                          >
+                            Confirm
+                          </button>
+                        ) : (
+                          <button
+                            className="ghost-button"
+                            type="button"
+                            onClick={() =>
+                              setConfirmDelete(workout.id)
+                            }
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </article>
+                    );
+                  })
+                )}
+              </div>
+              </>
+            ) : (
             <div className="history-grid">
               {[
                 ...PRIMARY_SPLITS,
@@ -940,84 +1149,30 @@ export default function App() {
                     <h3>{workoutSplit === "Other" ? "Uncategorized" : workoutSplit}</h3>
                     {Object.entries(filteredGroupedHistory?.[workoutSplit] ?? {})
                       .sort(([a], [b]) => a.localeCompare(b))
-                      .map(([workoutExercise, items]) => {
-                        const key = `${workoutSplit}-${workoutExercise}`;
-                        const isCollapsed = collapsed[key] ?? true;
-
-                      return (
-                        <div className="history-group" key={workoutExercise}>
-                          <button
-                            className="history-toggle"
-                            type="button"
-                            onClick={() => toggleCollapse(workoutSplit, workoutExercise)}
-                          >
-                            <span>{workoutExercise}</span>
-                            <small>{items.length}</small>
-                            <strong>{isCollapsed ? "+" : "-"}</strong>
-                          </button>
-
-                          {!isCollapsed && (
-                            <div className="history-list">
-                              {items.map((workout) => (
-                                <article className="workout-row" key={workout.id}>
-                                  <div>
-                                    <span className="muted">
-                                      {formatDate(workout.createdAt)} -{" "}
-                                      {formatPacificTime(workout.createdAt)} PST
-                                    </span>
-                                    <strong>
-                                      {workout.weight} lbs - {workout.sets?.join(" / ")}
-                                    </strong>
-                                    <small>
-                                      {workout.equipment}
-                                      {" | "}
-                                      {workout.variations?.length
-                                        ? workout.variations.join(" / ")
-                                        : "Standard"}
-                                    </small>
-                                    {workout.notes && <p>{workout.notes}</p>}
-                                  </div>
-
-                                  <div className="workout-actions">
-                                    <button
-                                      className="ghost-button"
-                                      type="button"
-                                      onClick={() => editWorkout(workout)}
-                                    >
-                                      Edit
-                                    </button>
-
-                                    {confirmDelete === workout.id ? (
-                                      <button
-                                        className="danger-button"
-                                        type="button"
-                                        onClick={() => {
-                                          deleteWorkout(workout.id);
-                                          setConfirmDelete(null);
-                                        }}
-                                      >
-                                        Confirm
-                                      </button>
-                                    ) : (
-                                      <button
-                                        className="ghost-button"
-                                        type="button"
-                                        onClick={() => setConfirmDelete(workout.id)}
-                                      >
-                                        Delete
-                                      </button>
-                                    )}
-                                  </div>
-                                </article>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                      .map(([workoutExercise, items]) => (
+                        <button
+                          className="history-exercise-link"
+                          key={workoutExercise}
+                          type="button"
+                          onClick={() =>
+                            openHistoryExerciseDetail(workoutSplit, workoutExercise)
+                          }
+                        >
+                          <span className="history-exercise-name">{workoutExercise}</span>
+                          <span className="history-exercise-meta">
+                            <small>
+                              {items.length} session{items.length === 1 ? "" : "s"}
+                            </small>
+                            <span className="history-exercise-chevron" aria-hidden>
+                              ›
+                            </span>
+                          </span>
+                        </button>
+                      ))}
                 </section>
               ))}
             </div>
+            )}
           </div>
         </section>
       )}

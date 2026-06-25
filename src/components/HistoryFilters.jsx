@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ALL_EXERCISES, PRIMARY_SPLITS } from "../data/workoutConfig";
 import {
   exerciseMatchesHistorySplits,
@@ -19,7 +19,6 @@ export function HistoryFilters({
   workouts,
 }) {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const [filteredExercises, setFilteredExercises] = useState([]);
   const [inputValue, setInputValue] = useState(selectedExercise);
   const dropdownRef = useRef(null);
 
@@ -33,7 +32,7 @@ export function HistoryFilters({
     [workouts]
   );
 
-  const filterExercisesByQuery = (value) => {
+  const filterExercisesByQuery = useCallback((value) => {
     const query = value.trim().toLowerCase();
     if (!query) {
       return [];
@@ -46,7 +45,12 @@ export function HistoryFilters({
 
       return exerciseMatchesHistorySplits(exercise, selectedSplits, workouts);
     });
-  };
+  }, [searchableExercises, selectedSplits, workouts]);
+
+  const filteredExercises = useMemo(
+    () => filterExercisesByQuery(inputValue),
+    [filterExercisesByQuery, inputValue]
+  );
 
   const selectSplit = (split) => {
     setSelectedSplits((current) => {
@@ -68,7 +72,6 @@ export function HistoryFilters({
     setInputValue(value);
 
     const filtered = filterExercisesByQuery(value);
-    setFilteredExercises(filtered);
     setIsDropdownOpen(filtered.length > 0);
   };
 
@@ -76,13 +79,11 @@ export function HistoryFilters({
     setSelectedExercise(exercise);
     setInputValue(exercise);
     setIsDropdownOpen(false);
-    setFilteredExercises([]);
   };
 
   const clearExercise = () => {
     setSelectedExercise("");
     setInputValue("");
-    setFilteredExercises([]);
     setIsDropdownOpen(false);
   };
 
@@ -98,31 +99,14 @@ export function HistoryFilters({
   }, []);
 
   useEffect(() => {
-    setInputValue(selectedExercise);
-  }, [selectedExercise]);
-
-  useEffect(() => {
     if (!selectedExercise) {
       return;
     }
 
     if (!exerciseMatchesHistorySplits(selectedExercise, selectedSplits, workouts)) {
       setSelectedExercise("");
-      setInputValue("");
-      setFilteredExercises([]);
-      setIsDropdownOpen(false);
     }
   }, [selectedSplits, selectedExercise, setSelectedExercise, workouts]);
-
-  useEffect(() => {
-    if (!inputValue.trim() || selectedExercise === inputValue) {
-      return;
-    }
-
-    const filtered = filterExercisesByQuery(inputValue);
-    setFilteredExercises(filtered);
-    setIsDropdownOpen(filtered.length > 0);
-  }, [selectedSplits, workouts]);
 
   const allSplitsActive = isHistorySplitFilterAll(selectedSplits);
 
@@ -168,7 +152,6 @@ export function HistoryFilters({
               onChange={handleInputChange}
               onFocus={() => {
                 const filtered = filterExercisesByQuery(inputValue);
-                setFilteredExercises(filtered);
                 setIsDropdownOpen(filtered.length > 0);
               }}
               className="autocomplete-input"

@@ -29,13 +29,15 @@ import {
   PRIMARY_SPLITS,
   TEMPLATE_SPLITS,
   TRACKER_SPLITS,
-  USERS,
   VARIATIONS,
 } from "./data/workoutConfig";
 import { ChartTooltip } from "./components/ChartTooltip";
+import { LoginPage } from "./components/LoginPage";
 import { TrackerSidePanel } from "./components/TrackerSidePanel";
 import { Toast } from "./components/Toast";
+import { UserSwitcher } from "./components/UserSwitcher";
 import { HistoryFilters } from "./components/HistoryFilters";
+import { useAuth } from "./context/useAuth";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import {
   emptyForm,
@@ -55,8 +57,14 @@ import {
 const workoutsRef = collection(db, "workouts");
 
 export default function App() {
+  const { authUser, userProfile, loading, signOut, isAdmin } = useAuth();
   const [activeView, setActiveView] = useLocalStorage("workoutTracker.activeView", "Tracker");
-  const [user, setUser] = useLocalStorage("workoutTracker.user", "ryan");
+  const [viewedUsername, setViewedUsername] = useLocalStorage("workoutTracker.viewedUsername", null);
+  const ownerUsername = userProfile?.username || "";
+  const user =
+    isAdmin && viewedUsername && viewedUsername !== ownerUsername
+      ? viewedUsername
+      : ownerUsername;
   const [workouts, setWorkouts] = useState([]);
 
   const [formDrafts, setFormDrafts] = useLocalStorage("workoutTracker.formDrafts", {});
@@ -112,6 +120,10 @@ export default function App() {
   const { split, exercise, customExercise, equipment, weight, variations, sets, notes } = formDraft;
 
   useEffect(() => {
+    if (!user) {
+      return undefined;
+    }
+
     const q = query(workoutsRef, where("user", "==", user), orderBy("createdAt", "desc"));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -132,7 +144,6 @@ export default function App() {
   }, [user]);
 
   const availableExercises = EXERCISE_MAP[split] || [];
-  const nextUser = USERS.find((item) => item !== user);
   const resolvedExercise = exercise === "__custom__" ? customExercise.trim() : exercise;
   const selectableExercises = useMemo(
     () =>
@@ -143,18 +154,65 @@ export default function App() {
   );
 
   const userStats = useMemo(() => {
-    const exerciseCounts = workouts.reduce((acc, workout) => {
-      acc[workout.exercise] = (acc[workout.exercise] || 0) + 1;
-      return acc;
-    }, {});
+    const now = new Date();
+    const currentWeekStart = new Date(now);
+    const daysSinceMonday = (currentWeekStart.getDay() + 6) % 7;
+    currentWeekStart.setDate(currentWeekStart.getDate() - daysSinceMonday);
+    currentWeekStart.setHours(0, 0, 0, 0);
 
-    const favoriteExercise =
-      Object.entries(exerciseCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "None yet";
+    const lastWeekStart = new Date(currentWeekStart);
+    lastWeekStart.setDate(lastWeekStart.getDate() - 7);
+
+    const twoWeeksAgo = new Date();
+    twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
+    twoWeeksAgo.setHours(0, 0, 0, 0);
+
+    let thisWeekCount = 0;
+    let lastWeekCount = 0;
+    let prCount = 0;
+
+    const getWorkoutTime = (workout) =>
+      workout.createdAt?.toDate?.().getTime() ?? (workout.createdAt?.seconds || 0) * 1000;
+
+    for (const workout of workouts) {
+      const workoutTime = getWorkoutTime(workout);
+      if (!workoutTime) continue;
+
+      if (workoutTime >= currentWeekStart.getTime()) {
+        thisWeekCount++;
+      } else if (workoutTime >= lastWeekStart.getTime() && workoutTime < currentWeekStart.getTime()) {
+        lastWeekCount++;
+      }
+    }
+
+    const maxWeightByExercise = {};
+    const chronologicalWorkouts = [...workouts].sort(
+      (a, b) => getWorkoutTime(a) - getWorkoutTime(b)
+    );
+
+    for (const workout of chronologicalWorkouts) {
+      const workoutTime = getWorkoutTime(workout);
+      const workoutWeight = Number(workout.weight);
+      if (!workout.exercise || !workoutTime || !Number.isFinite(workoutWeight)) continue;
+
+      const previousMax = maxWeightByExercise[workout.exercise];
+      if (previousMax !== undefined && workoutWeight > previousMax && workoutTime >= twoWeeksAgo.getTime()) {
+        prCount++;
+      }
+
+      maxWeightByExercise[workout.exercise] =
+        previousMax === undefined ? workoutWeight : Math.max(previousMax, workoutWeight);
+    }
+
+    let trend = "same";
+    if (thisWeekCount > lastWeekCount) trend = "up";
+    else if (thisWeekCount < lastWeekCount) trend = "down";
 
     return {
       total: workouts.length,
-      uniqueExercises: Object.keys(exerciseCounts).length,
-      favoriteExercise,
+      thisWeek: thisWeekCount,
+      trend,
+      prs: prCount,
       lastWorkout: workouts[0],
     };
   }, [workouts]);
@@ -472,10 +530,17 @@ export default function App() {
     }));
   };
 
-  const toggleUser = () => {
-    setUser(nextUser);
+  const handleViewUser = (username) => {
+    setViewedUsername(username);
     setConfirmDelete(null);
     setEditingWorkoutId(null);
+  };
+
+  const handleSignOut = async () => {
+    setViewedUsername(null);
+    setConfirmDelete(null);
+    setEditingWorkoutId(null);
+    await signOut();
   };
 
   const toggleArrayValue = (value, setter) => {
@@ -602,33 +667,82 @@ export default function App() {
     setToastMessage("Workout deleted");
   };
 
+  if (loading) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-panel">
+          <p className="eyebrow">Workout log</p>
+          <h1>Loading your session...</h1>
+        </section>
+      </main>
+    );
+  }
+
+  if (!authUser) {
+    return <LoginPage />;
+  }
+
+  if (!ownerUsername) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-panel">
+          <p className="eyebrow">Workout log</p>
+          <h1>Profile setup incomplete</h1>
+          <p className="auth-copy">
+            We could not load your profile. Try signing out and back in.
+          </p>
+          <button className="primary-button" type="button" onClick={handleSignOut}>
+            Sign out
+          </button>
+        </section>
+      </main>
+    );
+  }
+
+  const isViewingOtherProfile =
+    isAdmin && viewedUsername && viewedUsername !== ownerUsername;
+
   return (
     <main className="app-shell">
       <Toast message={toastMessage} />
+      {isViewingOtherProfile && (
+        <div className="admin-view-banner" role="status">
+          Viewing <strong>{titleCaseUser(user)}</strong>&apos;s workouts as admin.
+        </div>
+      )}
       <section className="topbar">
         <div>
           <p className="eyebrow">Workout Tracker App</p>
           <h1>頑張れ！</h1>
         </div>
 
-        <button className="user-switch" type="button" onClick={toggleUser}>
-          <span>{titleCaseUser(user)}</span>
-          <small>Switch to {titleCaseUser(nextUser)}</small>
-        </button>
+        <UserSwitcher
+          currentUsername={ownerUsername}
+          viewedUsername={isViewingOtherProfile ? viewedUsername : null}
+          isAdmin={isAdmin}
+          onViewUser={handleViewUser}
+          onSignOut={handleSignOut}
+          signedInLabel={titleCaseUser(ownerUsername)}
+        />
       </section>
 
       <section className="stats-grid">
         <div className="stat-card">
-          <span>Sessions</span>
-          <strong>{userStats.total}</strong>
+          <span>This week</span>
+          <strong>
+            {userStats.thisWeek}
+            {userStats.trend === "up" && <span className="trend-arrow trend-up"> ↑</span>}
+            {userStats.trend === "down" && <span className="trend-arrow trend-down"> ↓</span>}
+            {userStats.trend === "same" && <span className="trend-arrow trend-same"> —</span>}
+          </strong>
         </div>
         <div className="stat-card">
-          <span>Exercises</span>
-          <strong>{userStats.uniqueExercises}</strong>
+          <span>PRs (2w)</span>
+          <strong>{userStats.prs}</strong>
         </div>
-        <div className="stat-card wide">
-          <span>Most logged</span>
-          <strong>{userStats.favoriteExercise}</strong>
+        <div className="stat-card">
+          <span>Sessions</span>
+          <strong>{userStats.total}</strong>
         </div>
       </section>
 
@@ -769,22 +883,7 @@ export default function App() {
                   ))}
                 </select>
               </label>
-
-              <label>
-                <span>Weight</span>
-                <input
-                  placeholder={lastWorkout?.weight ? `Last: ${lastWorkout.weight} lbs` : "Weight"}
-                  type="number"
-                  value={weight}
-                  onChange={(event) => updateDraftField("weight", event.target.value)}
-                  required
-                />
-              </label>
             </div>
-
-            {/* Old-data import kept hidden for occasional manual backfill.
-            <input type="file" accept=".csv" onChange={(event) => importCSV(event.target.files[0])} />
-            */}
 
             <div className="chip-group" aria-label="Exercise attributes">
               {VARIATIONS.map((variation) => (
@@ -797,6 +896,19 @@ export default function App() {
                   {variation}
                 </button>
               ))}
+            </div>
+
+            <div className="field-grid">
+              <label>
+                <span>Weight</span>
+                <input
+                  placeholder={lastWorkout?.weight ? `Last: ${lastWorkout.weight} lbs` : "Weight"}
+                  type="number"
+                  value={weight}
+                  onChange={(event) => updateDraftField("weight", event.target.value)}
+                  required
+                />
+              </label>
             </div>
 
             <div className="sets-grid">
@@ -1015,6 +1127,7 @@ export default function App() {
             </div>
 
             <HistoryFilters
+              key={selectedHistoryExercise || "all-exercises"}
               selectedSplits={selectedHistorySplits}
               setSelectedSplits={setSelectedHistorySplits}
               selectedExercise={selectedHistoryExercise}
@@ -1185,7 +1298,21 @@ export default function App() {
             <div className="settings-list">
               <div>
                 <span>Active user</span>
-                <strong>{titleCaseUser(user)}</strong>
+                <strong>{titleCaseUser(ownerUsername)}</strong>
+              </div>
+              {isViewingOtherProfile && (
+                <div>
+                  <span>Viewing profile</span>
+                  <strong>{titleCaseUser(user)}</strong>
+                </div>
+              )}
+              <div>
+                <span>Signed in with</span>
+                <strong>{authUser.email}</strong>
+              </div>
+              <div>
+                <span>Access level</span>
+                <strong>{isAdmin ? "Admin" : "Member"}</strong>
               </div>
               <div>
                 <span>Workout styles</span>
@@ -1193,7 +1320,11 @@ export default function App() {
               </div>
               <div>
                 <span>Data scope</span>
-                <strong>Each user sees their own workout history</strong>
+                <strong>
+                  {isAdmin
+                    ? "Admins can browse any profile from the header switcher"
+                    : "You only see workouts tied to your Google account"}
+                </strong>
               </div>
             </div>
           </div>

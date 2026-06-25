@@ -1,0 +1,48 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function currentUserDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function isAdmin() {
+      return isSignedIn() && currentUserDoc().data.isAdmin == true;
+    }
+
+    function currentUsername() {
+      return currentUserDoc().data.username;
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow create: if isSignedIn()
+        && request.auth.uid == userId
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.username is string
+        && request.resource.data.email == request.auth.token.email;
+      allow update: if isSignedIn()
+        && request.auth.uid == userId
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.username == resource.data.username;
+    }
+
+    match /workouts/{workoutId} {
+      allow read: if isSignedIn() && (
+        resource.data.user == currentUsername() || isAdmin()
+      );
+
+      allow create: if isSignedIn() && (
+        request.resource.data.user == currentUsername() || isAdmin()
+      );
+
+      allow update, delete: if isSignedIn() && (
+        resource.data.user == currentUsername() || isAdmin()
+      );
+    }
+  }
+}

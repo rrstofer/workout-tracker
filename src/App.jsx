@@ -40,17 +40,22 @@ import { HistoryFilters } from "./components/HistoryFilters";
 import { useAuth } from "./context/useAuth";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import {
+  calculateVolume,
   emptyForm,
   formatDate,
   formatPacificTime,
+  getChartMetricTitle,
   getDateKey,
   getLocalDateKey,
+  getPlateBreakdown,
   getSplitForExercise,
   getSplitForWorkout,
+  isBarbellEquipment,
   isHistorySplitFilterAll,
   isWithinLastHours,
   matchesHistorySplitFilter,
   normalizeVariations,
+  supportsBaseWeight,
   titleCaseUser,
 } from "./utils/workoutUtils";
 
@@ -80,6 +85,10 @@ export default function App() {
     "workoutTracker.progressVariations",
     []
   );
+  const [progressMetric, setProgressMetric] = useLocalStorage(
+    "workoutTracker.progressMetric",
+    "weight"
+  );
   const [templateSplit, setTemplateSplit] = useLocalStorage("workoutTracker.templateSplit", "Push");
   const [selectedHistoryVariationFilters, setSelectedHistoryVariationFilters] = useLocalStorage(
     "workoutTracker.historyFilters",
@@ -99,6 +108,8 @@ export default function App() {
   );
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [selectedHeatmapDay, setSelectedHeatmapDay] = useState(null);
+  const [selectedPrPopup, setSelectedPrPopup] = useState(null);
+  const [statsNow, setStatsNow] = useState(() => Date.now());
   const [editingWorkoutId, setEditingWorkoutId] = useLocalStorage(
     "workoutTracker.editingWorkoutId",
     null
@@ -117,7 +128,21 @@ export default function App() {
       };
     });
   };
-  const { split, exercise, customExercise, equipment, weight, variations, sets, notes } = formDraft;
+  const {
+    split,
+    exercise,
+    customExercise,
+    equipment,
+    weight,
+    barWeight,
+    baseWeight,
+    showLoadOptions,
+    variations,
+    sets,
+    notes,
+    perSetWeights,
+    setWeights,
+  } = formDraft;
 
   useEffect(() => {
     if (!user) {
@@ -143,8 +168,23 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setStatsNow(Date.now());
+    }, 60000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
+
   const availableExercises = EXERCISE_MAP[split] || [];
   const resolvedExercise = exercise === "__custom__" ? customExercise.trim() : exercise;
+  const isBarbell = isBarbellEquipment(equipment);
+  const hasBaseWeightOption = supportsBaseWeight(equipment);
+  const effectiveBarWeight = showLoadOptions && isBarbell && barWeight !== "" ? Number(barWeight) : 45;
+  const effectiveBaseWeight = showLoadOptions && hasBaseWeightOption ? Number(baseWeight) || 0 : 0;
+  const displayedWeight = Number(weight) || 0;
+  const totalWorkingWeight = displayedWeight + effectiveBaseWeight;
+  const plateBreakdown = getPlateBreakdown(displayedWeight, effectiveBarWeight);
   const selectableExercises = useMemo(
     () =>
       Array.from(new Set([...ALL_EXERCISES, ...workouts.map((workout) => workout.exercise)]))
@@ -154,22 +194,13 @@ export default function App() {
   );
 
   const userStats = useMemo(() => {
-    const now = new Date();
-    const currentWeekStart = new Date(now);
-    const daysSinceMonday = (currentWeekStart.getDay() + 6) % 7;
-    currentWeekStart.setDate(currentWeekStart.getDate() - daysSinceMonday);
-    currentWeekStart.setHours(0, 0, 0, 0);
+    const sevenDaysAgo = statsNow - 7 * 86400000;
+    const fourteenDaysAgo = statsNow - 14 * 86400000;
 
-    const lastWeekStart = new Date(currentWeekStart);
-    lastWeekStart.setDate(lastWeekStart.getDate() - 7);
-
-    const twoWeeksAgo = new Date();
-    twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
-    twoWeeksAgo.setHours(0, 0, 0, 0);
-
-    let thisWeekCount = 0;
-    let lastWeekCount = 0;
-    let prCount = 0;
+    let currentCount = 0;
+    let previousCount = 0;
+    let currentVolume = 0;
+    let previousVolume = 0;
 
     const getWorkoutTime = (workout) =>
       workout.createdAt?.toDate?.().getTime() ?? (workout.createdAt?.seconds || 0) * 1000;
@@ -178,17 +209,22 @@ export default function App() {
       const workoutTime = getWorkoutTime(workout);
       if (!workoutTime) continue;
 
-      if (workoutTime >= currentWeekStart.getTime()) {
-        thisWeekCount++;
-      } else if (workoutTime >= lastWeekStart.getTime() && workoutTime < currentWeekStart.getTime()) {
-        lastWeekCount++;
+      if (workoutTime >= sevenDaysAgo) {
+        currentCount++;
+        currentVolume += calculateVolume(workout);
+      } else if (workoutTime >= fourteenDaysAgo) {
+        previousCount++;
+        previousVolume += calculateVolume(workout);
       }
     }
 
+    // PR detection: find all PRs in the last 14 days
     const maxWeightByExercise = {};
     const chronologicalWorkouts = [...workouts].sort(
       (a, b) => getWorkoutTime(a) - getWorkoutTime(b)
     );
+
+    const prDetails = [];
 
     for (const workout of chronologicalWorkouts) {
       const workoutTime = getWorkoutTime(workout);
@@ -196,26 +232,32 @@ export default function App() {
       if (!workout.exercise || !workoutTime || !Number.isFinite(workoutWeight)) continue;
 
       const previousMax = maxWeightByExercise[workout.exercise];
-      if (previousMax !== undefined && workoutWeight > previousMax && workoutTime >= twoWeeksAgo.getTime()) {
-        prCount++;
+      if (previousMax !== undefined && workoutWeight > previousMax && workoutTime >= fourteenDaysAgo) {
+        prDetails.push({
+          exercise: workout.exercise,
+          weight: workoutWeight,
+          date: formatDate(workout.createdAt),
+        });
       }
 
       maxWeightByExercise[workout.exercise] =
         previousMax === undefined ? workoutWeight : Math.max(previousMax, workoutWeight);
     }
 
-    let trend = "same";
-    if (thisWeekCount > lastWeekCount) trend = "up";
-    else if (thisWeekCount < lastWeekCount) trend = "down";
+    const sessionTrend = currentCount > previousCount ? "up" : currentCount < previousCount ? "down" : "same";
+    const volumeTrend = currentVolume > previousVolume ? "up" : currentVolume < previousVolume ? "down" : "same";
 
     return {
       total: workouts.length,
-      thisWeek: thisWeekCount,
-      trend,
-      prs: prCount,
+      currentSessions: currentCount,
+      sessionTrend,
+      prs: prDetails.length,
+      prDetails,
+      currentVolume,
+      volumeTrend,
       lastWorkout: workouts[0],
     };
-  }, [workouts]);
+  }, [statsNow, workouts]);
 
   const lastWorkout = useMemo(() => {
     if (!resolvedExercise || !equipment) return null;
@@ -253,7 +295,8 @@ export default function App() {
       .sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0))
       .map((workout) => ({
         date: formatDate(workout.createdAt),
-        weight: workout.weight,
+        weight: Number(workout.weight) || 0,
+        volume: calculateVolume(workout),
         reps: Array.isArray(workout.sets) ? workout.sets.join(" / ") : "",
       }));
   }, [
@@ -370,7 +413,8 @@ export default function App() {
         .sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0))
         .map((workout) => ({
           date: formatDate(workout.createdAt),
-          weight: workout.weight,
+          weight: Number(workout.weight) || 0,
+          volume: calculateVolume(workout),
           reps: Array.isArray(workout.sets) ? workout.sets.join(" / ") : "",
           notes: workout.notes || "",
         })),
@@ -518,6 +562,8 @@ export default function App() {
     setFormDraft((current) => ({
       ...current,
       [field]: value,
+      ...(field === "equipment" && !isBarbellEquipment(value) ? { barWeight: "45" } : {}),
+      ...(field === "equipment" && !supportsBaseWeight(value) ? { baseWeight: "" } : {}),
     }));
   };
 
@@ -596,17 +642,63 @@ export default function App() {
   const addWorkout = async (event) => {
     event.preventDefault();
 
+    if (perSetWeights) {
+      for (let i = 0; i < 4; i++) {
+        const hasReps = sets[i] !== "";
+        const hasWeight = setWeights[i] !== "";
+        if (hasReps && !hasWeight) {
+          setToastMessage(`Set ${i + 1} needs a weight`);
+          return;
+        }
+        if (hasWeight && !hasReps) {
+          setToastMessage(`Set ${i + 1} needs reps`);
+          return;
+        }
+      }
+    }
+
+    if ((isBarbell && Number(effectiveBarWeight) < 0) || effectiveBaseWeight < 0) {
+      setToastMessage("Base weights cannot be negative");
+      return;
+    }
+
     const completedSets = sets.filter((set) => set !== "").map(Number);
+    const loadedSetWeights = setWeights
+      .slice(0, completedSets.length)
+      .map((w) => (w !== "" ? Number(w) : Number(weight)));
+    const completedSetWeights = loadedSetWeights.map((setWeight) => setWeight + effectiveBaseWeight);
+    const savedWeight = Number(weight) + effectiveBaseWeight;
+
+    const hasDifferentWeights =
+      perSetWeights &&
+      completedSetWeights.some((w) => w !== savedWeight);
+
     const workoutPayload = {
       user,
       split,
       exercise: resolvedExercise,
       equipment,
       variations,
-      weight: Number(weight),
+      weight: savedWeight,
       sets: completedSets,
       notes,
     };
+
+    if (isBarbell && Number(effectiveBarWeight) !== 45) {
+      workoutPayload.barWeight = Number(effectiveBarWeight);
+    }
+
+    if (hasBaseWeightOption && effectiveBaseWeight > 0) {
+      workoutPayload.baseWeight = effectiveBaseWeight;
+      workoutPayload.loadWeight = Number(weight);
+    }
+
+    if (hasDifferentWeights) {
+      workoutPayload.weights = completedSetWeights;
+      if (hasBaseWeightOption && effectiveBaseWeight > 0) {
+        workoutPayload.loadWeights = loadedSetWeights;
+      }
+    }
 
     if (editingWorkoutId) {
       await updateDoc(doc(db, "workouts", editingWorkoutId), {
@@ -643,17 +735,38 @@ export default function App() {
     const splitForWorkout = workout.split || getSplitForWorkout(workout);
     const isListedExercise = EXERCISE_MAP[splitForWorkout]?.includes(workout.exercise);
 
+    const hasSavedWeights = Array.isArray(workout.weights) && workout.weights.length > 0;
+    const savedBaseWeight = Number(workout.baseWeight) || 0;
+
     setFormDraft({
       split: splitForWorkout === "Other" ? "Core" : splitForWorkout,
       exercise: isListedExercise ? workout.exercise : "__custom__",
       customExercise: isListedExercise ? "" : workout.exercise,
       equipment: workout.equipment || "",
-      weight: workout.weight ? String(workout.weight) : "",
+      weight:
+        workout.loadWeight !== undefined
+          ? String(workout.loadWeight)
+          : workout.weight
+            ? String(workout.weight)
+            : "",
+      barWeight: workout.barWeight ? String(workout.barWeight) : "45",
+      baseWeight: workout.baseWeight ? String(workout.baseWeight) : "",
+      showLoadOptions: Boolean(workout.barWeight || workout.baseWeight || workout.loadWeight),
       variations: normalizeVariations(workout.variations),
       sets: Array.from({ length: 4 }, (_, index) =>
         workout.sets?.[index] === undefined ? "" : String(workout.sets[index])
       ),
       notes: workout.notes || "",
+      perSetWeights: hasSavedWeights,
+      setWeights: hasSavedWeights
+        ? Array.from({ length: 4 }, (_, index) =>
+            workout.loadWeights?.[index] !== undefined
+              ? String(workout.loadWeights[index])
+              : workout.weights?.[index] !== undefined
+                ? String(Number(workout.weights[index]) - savedBaseWeight)
+              : ""
+          )
+        : ["", "", "", ""],
     });
     setEditingWorkoutId(workout.id);
     setActiveView("Tracker");
@@ -728,21 +841,26 @@ export default function App() {
 
       <section className="stats-grid">
         <div className="stat-card">
-          <span>This week</span>
+          <span>Sessions (7d)</span>
           <strong>
-            {userStats.thisWeek}
-            {userStats.trend === "up" && <span className="trend-arrow trend-up"> ↑</span>}
-            {userStats.trend === "down" && <span className="trend-arrow trend-down"> ↓</span>}
-            {userStats.trend === "same" && <span className="trend-arrow trend-same"> —</span>}
+            {userStats.currentSessions}
+            {userStats.sessionTrend === "up" && <span className="trend-arrow trend-up"> ↑</span>}
+            {userStats.sessionTrend === "down" && <span className="trend-arrow trend-down"> ↓</span>}
+            {userStats.sessionTrend === "same" && <span className="trend-arrow trend-same"> —</span>}
           </strong>
         </div>
-        <div className="stat-card">
-          <span>PRs (2w)</span>
+        <div className="stat-card" role="button" tabIndex={0} onClick={() => setSelectedPrPopup(userStats.prDetails)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setSelectedPrPopup(userStats.prDetails); }}>
+          <span>PRs (14d)</span>
           <strong>{userStats.prs}</strong>
         </div>
         <div className="stat-card">
-          <span>Sessions</span>
-          <strong>{userStats.total}</strong>
+          <span>Volume (7d)</span>
+          <strong>
+            {userStats.currentVolume.toLocaleString()} lbs
+            {userStats.volumeTrend === "up" && <span className="trend-arrow trend-up"> ↑</span>}
+            {userStats.volumeTrend === "down" && <span className="trend-arrow trend-down"> ↓</span>}
+            {userStats.volumeTrend === "same" && <span className="trend-arrow trend-same"> —</span>}
+          </strong>
         </div>
       </section>
 
@@ -781,6 +899,31 @@ export default function App() {
             </p>
 
             <button onClick={() => setSelectedHeatmapDay(null)}>
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
+      {selectedPrPopup && (
+        <div className="heatmap-popup" onClick={() => setSelectedPrPopup(null)}>
+          <div
+            className="heatmap-popup-inner"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <strong>PRs (last 14 days)</strong>
+            {selectedPrPopup.length > 0 ? (
+              <ul className="pr-list">
+                {selectedPrPopup.map((pr, index) => (
+                  <li key={index}>
+                    {pr.exercise} — {pr.weight} lbs on {pr.date}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="muted">No PRs in the last 14 days.</p>
+            )}
+            <button onClick={() => setSelectedPrPopup(null)}>
               Close
             </button>
           </div>
@@ -900,7 +1043,7 @@ export default function App() {
 
             <div className="field-grid">
               <label>
-                <span>Weight</span>
+                <span>{hasBaseWeightOption && effectiveBaseWeight > 0 ? "Loaded weight" : "Weight"}</span>
                 <input
                   placeholder={lastWorkout?.weight ? `Last: ${lastWorkout.weight} lbs` : "Weight"}
                   type="number"
@@ -910,11 +1053,118 @@ export default function App() {
                 />
               </label>
             </div>
+            
+            <div className="per-weight-section">
+            <div className="per-weight-actions">  
+              <div className="chip-group" aria-label="Per-set weight options">
+                <button
+                  className={perSetWeights ? "chip active" : "chip"}
+                  type="button"
+                  onClick={() =>
+                    setFormDraft((current) => ({
+                        ...current,
+                        perSetWeights: !current.perSetWeights,
+                        setWeights: !current.perSetWeights
+                        ? current.sets.map((s) => (s !== "" ? current.weight || "" : ""))
+                        : ["", "", "", ""],
+                    }))
+                  }
+                >
+                  Per-set weights
+                </button>
+              </div>
+          </div>
+
+            {(isBarbell || hasBaseWeightOption) && (
+              <div className="chip-group" aria-label="Load calculation options">
+                <button
+                  className={showLoadOptions ? "chip active" : "chip"}
+                  type="button"
+                  onClick={() =>
+                    setFormDraft((current) => ({
+                      ...current,
+                      showLoadOptions: !current.showLoadOptions,
+                      ...(!current.showLoadOptions ? {} : { barWeight: "45", baseWeight: "" }),
+                    }))
+                  }
+                >
+                  Load math
+                </button>
+              </div>
+            )}
+
+            {showLoadOptions && isBarbell && (
+              <div className="load-helper">
+                <label>
+                  <span>Bar weight</span>
+                  <input
+                    inputMode="decimal"
+                    min="0"
+                    placeholder="45"
+                    type="number"
+                    value={barWeight}
+                    onChange={(event) => updateDraftField("barWeight", event.target.value)}
+                  />
+                </label>
+                <div className="load-result">
+                  <span>Plates per side</span>
+                  <strong>{plateBreakdown.message}</strong>
+                  {!plateBreakdown.isLoadable && displayedWeight > 0 && (
+                    <small className="muted">
+                      Needs {Math.abs(plateBreakdown.remaining).toLocaleString()} lb more per side.
+                    </small>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {showLoadOptions && hasBaseWeightOption && (
+              <div className="load-helper">
+                <label>
+                  <span>Starting weight</span>
+                  <input
+                    inputMode="decimal"
+                    min="0"
+                    placeholder="0"
+                    type="number"
+                    value={baseWeight}
+                    onChange={(event) => updateDraftField("baseWeight", event.target.value)}
+                  />
+                </label>
+                <div className="load-result">
+                  <span>Total working weight</span>
+                  <strong>{totalWorkingWeight.toLocaleString()} lbs</strong>
+                  <small className="muted">
+                    Saved as {displayedWeight.toLocaleString()} + {effectiveBaseWeight.toLocaleString()}.
+                  </small>
+                </div>
+              </div>
+            )}
+            </div>
 
             <div className="sets-grid">
               {sets.map((setValue, index) => (
-                <label key={`set-${index + 1}`}>
+                <label
+                  key={`set-${index + 1}`}
+                  className={perSetWeights ? "set-row-per-weight" : ""}
+                >
                   <span>Set {index + 1}</span>
+                  {perSetWeights && (
+                    <input
+                      className="set-weight-input"
+                      placeholder={weight || (hasBaseWeightOption ? "Loaded" : "Weight")}
+                      type="number"
+                      value={setWeights[index]}
+                      onChange={(event) =>
+                        setFormDraft((current) => ({
+                          ...current,
+                          setWeights: current.setWeights.map((w, wi) =>
+                            wi === index ? event.target.value : w
+                          ),
+                        }))
+                      }
+                    />
+                  )}
                   <input
                     placeholder={
                       lastWorkout?.sets?.[index] ? `Last: ${lastWorkout.sets[index]}` : "Reps"
@@ -1026,7 +1276,7 @@ export default function App() {
                 <p className="eyebrow">Progress</p>
                 <h2>Exercise trend</h2>
               </div>
-              <span className="pill">{progressData.length} points</span>
+              <span className="pill progress-count">{progressData.length} points</span>
             </div>
 
             <div className="field-grid progress-controls">
@@ -1078,9 +1328,24 @@ export default function App() {
             </div>
 
             <div className="chart-wrap">
+              <div className="chart-heading">
+                <span className="chart-metric-label">
+                  {getChartMetricTitle(progressMetric)}
+                </span>
+                <button
+                  className={`chart-metric-toggle ${progressMetric === "volume" ? "active" : ""}`}
+                  type="button"
+                  onClick={() => setProgressMetric(progressMetric === "weight" ? "volume" : "weight")}
+                >
+                  {progressMetric === "weight" ? "Switch to Volume" : "Switch to Weight"}
+                </button>
+              </div>
               {progressExercise && progressData.length > 0 ? (
                 <ResponsiveContainer>
-                  <AreaChart data={progressData}>
+                  <AreaChart
+                    data={progressData}
+                    margin={{ top: 8, right: 18, bottom: 22, left: 8 }}
+                  >
                     <defs>
                       <linearGradient id="weightGradient" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="#67E8F9" stopOpacity={0.78} />
@@ -1090,11 +1355,16 @@ export default function App() {
                     </defs>
                     <CartesianGrid stroke="#263245" strokeDasharray="3 3" />
                     <XAxis dataKey="date" stroke="#94A3B8" tickLine={false} />
-                    <YAxis stroke="#94A3B8" tickLine={false} width={42} />
-                    <Tooltip content={<ChartTooltip />} />
+                    <YAxis
+                      stroke="#94A3B8"
+                      tickLine={false}
+                      width={progressMetric === "volume" ? 76 : 52}
+                      domain={[0, "dataMax + 1"]}
+                    />
+                    <Tooltip content={<ChartTooltip metric={progressMetric} />} />
                     <Area
                       type="monotone"
-                      dataKey="weight"
+                      dataKey={progressMetric}
                       stroke="#67E8F9"
                       strokeWidth={3}
                       fill="url(#weightGradient)"
@@ -1188,10 +1458,17 @@ export default function App() {
                       </span>
 
                       <div className="timeline-stats">
-                        <h4>{workout.weight} lbs</h4>
+                        <h4>
+                          {Array.isArray(workout.weights) && workout.weights.length > 0
+                            ? `${workout.weights.join(" / ")} lbs`
+                            : `${workout.weight} lbs`}
+                        </h4>
                         <strong className="timeline-sets">
                           {workout.sets?.join(" / ")} reps
                         </strong>
+                        <span className="timeline-volume-inline">
+                          · {calculateVolume(workout).toLocaleString()} lbs volume
+                        </span>
                       </div>
 
                       {(workout.equipment || timelineVariations.length > 0) && (

@@ -1,4 +1,10 @@
-import { formatDate, formatPacificTime } from "../utils/workoutUtils";
+import { useState } from "react";
+import {
+  calculateVolume,
+  formatDate,
+  formatPacificTime,
+  getChartMetricTitle,
+} from "../utils/workoutUtils";
 
 import {
   AreaChart,
@@ -21,6 +27,8 @@ export function TrackerSidePanel({
   setConfirmDelete,
   progressData,
 }) {
+  const [trackerMetric, setTrackerMetric] = useState("weight");
+
   return (
     <aside className="side-stack">
       <div className="panel last-panel">
@@ -28,11 +36,25 @@ export function TrackerSidePanel({
 
       {progressData?.length > 1 ? (
         <>
-          <h2>Exercise Trend</h2>
+          <div className="chart-heading">
+            <span className="chart-metric-label">
+              {getChartMetricTitle(trackerMetric)}
+            </span>
+            <button
+              className={`chart-metric-toggle ${trackerMetric === "volume" ? "active" : ""}`}
+              type="button"
+              onClick={() => setTrackerMetric(trackerMetric === "weight" ? "volume" : "weight")}
+            >
+              {trackerMetric === "weight" ? "Switch to Volume" : "Switch to Weight"}
+            </button>
+          </div>
 
           <div className="side-chart">
             <ResponsiveContainer width="100%" height={180}>
-              <AreaChart data={progressData}>
+              <AreaChart
+                data={progressData}
+                margin={{ top: 8, right: 10, bottom: 8, left: 4 }}
+              >
                 <defs>
                   <linearGradient id="trackerGradient" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="#67E8F9" stopOpacity={0.7} />
@@ -42,12 +64,12 @@ export function TrackerSidePanel({
 
                 <CartesianGrid stroke="#263245" strokeDasharray="3 3" />
                 <XAxis dataKey="date" stroke="#94A3B8" hide />
-                <YAxis stroke="#94A3B8" width={30} />
-                <Tooltip content={<ChartTooltip />} />
+                <YAxis stroke="#94A3B8" width={trackerMetric === "volume" ? 64 : 38} />
+                <Tooltip content={<ChartTooltip metric={trackerMetric} />} />
 
                 <Area
                   type="monotone"
-                  dataKey="weight"
+                  dataKey={trackerMetric}
                   stroke="#67E8F9"
                   strokeWidth={2}
                   fill="url(#trackerGradient)"
@@ -61,8 +83,15 @@ export function TrackerSidePanel({
           <h2>{lastWorkout.exercise}</h2>
 
           <div className="last-metric">
-            <strong>{lastWorkout.weight} lbs</strong>
+            <strong>
+              {Array.isArray(lastWorkout.weights) && lastWorkout.weights.length > 0
+                ? `${lastWorkout.weights.join(" / ")} lbs`
+                : `${lastWorkout.weight} lbs`}
+            </strong>
             <span>{lastWorkout.sets?.join(" / ")} reps</span>
+            <small className="muted">
+              Volume: {calculateVolume(lastWorkout).toLocaleString()} lbs
+            </small>
           </div>
 
           <p>{formatDate(lastWorkout.createdAt)}</p>
@@ -93,7 +122,9 @@ export function TrackerSidePanel({
                 <div>
                   <strong>{workout.exercise}</strong>
                   <span>
-                    {workout.weight} lbs - {workout.sets?.join(" / ")}
+                    {Array.isArray(workout.weights) && workout.weights.length > 0
+                      ? `${workout.weights.join(" / ")} lbs`
+                      : `${workout.weight} lbs`} - {workout.sets?.join(" / ")}
                   </span>
                   <small>
                     {workout.equipment} - {formatPacificTime(workout.createdAt)} PST

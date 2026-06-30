@@ -459,16 +459,10 @@ textarea {
 }
 
 .per-weight-section {
-  display: grid;
-  gap: 12px;
-}
-
-.per-weight-actions {
   display: flex;
-  gap: 8px;
+  gap: 12px;
   align-items: center;
 }
-
 
 label {
   display: grid;

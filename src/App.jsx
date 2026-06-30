@@ -1054,92 +1054,94 @@ export default function App() {
               </label>
             </div>
             
-            <div className="per-weight-section">
-            <div className="per-weight-actions">  
-              <div className="chip-group" aria-label="Per-set weight options">
-                <button
-                  className={perSetWeights ? "chip active" : "chip"}
-                  type="button"
-                  onClick={() =>
-                    setFormDraft((current) => ({
-                        ...current,
-                        perSetWeights: !current.perSetWeights,
-                        setWeights: !current.perSetWeights
-                        ? current.sets.map((s) => (s !== "" ? current.weight || "" : ""))
-                        : ["", "", "", ""],
-                    }))
-                  }
-                >
-                  Per-set weights
-                </button>
+            <div className="chip-group">
+              <div className="per-weight-section">
+                <div className="chip-group" aria-label="Per-set weight options">
+                  <button
+                    className={perSetWeights ? "chip active" : "chip"}
+                    type="button"
+                    onClick={() =>
+                      setFormDraft((current) => ({
+                          ...current,
+                          perSetWeights: !current.perSetWeights,
+                          setWeights: !current.perSetWeights
+                          ? current.sets.map((s) => (s !== "" ? current.weight || "" : ""))
+                          : ["", "", "", ""],
+                      }))
+                    }
+                  >
+                    Per-set weights
+                  </button>
+                </div>
               </div>
-          </div>
 
-            {(isBarbell || hasBaseWeightOption) && (
-              <div className="chip-group" aria-label="Load calculation options">
-                <button
-                  className={showLoadOptions ? "chip active" : "chip"}
-                  type="button"
-                  onClick={() =>
-                    setFormDraft((current) => ({
-                      ...current,
-                      showLoadOptions: !current.showLoadOptions,
-                      ...(!current.showLoadOptions ? {} : { barWeight: "45", baseWeight: "" }),
-                    }))
-                  }
-                >
-                  Load math
-                </button>
-              </div>
-            )}
+                {(isBarbell || hasBaseWeightOption) && (
+                  <div className="chip-group" aria-label="Load calculation options">
+                    <button
+                      className={showLoadOptions ? "chip active" : "chip"}
+                      type="button"
+                      onClick={() =>
+                        setFormDraft((current) => ({
+                          ...current,
+                          showLoadOptions: !current.showLoadOptions,
+                          ...(!current.showLoadOptions ? {} : { barWeight: "45", baseWeight: "" }),
+                        }))
+                      }
+                    >
+                      Load math
+                    </button>
+                  </div>
+                )}
+            </div>
 
-            {showLoadOptions && isBarbell && (
-              <div className="load-helper">
-                <label>
-                  <span>Bar weight</span>
-                  <input
-                    inputMode="decimal"
-                    min="0"
-                    placeholder="45"
-                    type="number"
-                    value={barWeight}
-                    onChange={(event) => updateDraftField("barWeight", event.target.value)}
-                  />
-                </label>
-                <div className="load-result">
-                  <span>Plates per side</span>
-                  <strong>{plateBreakdown.message}</strong>
-                  {!plateBreakdown.isLoadable && displayedWeight > 0 && (
+            <div className="load-math-section">
+              {showLoadOptions && isBarbell && (
+                <div className="load-helper">
+                  <label>
+                    <span>Bar weight</span>
+                    <input
+                      inputMode="decimal"
+                      min="0"
+                      placeholder="45"
+                      type="number"
+                      value={barWeight}
+                      onChange={(event) => updateDraftField("barWeight", event.target.value)}
+                    />
+                  </label>
+                  <div className="load-result">
+                    <span>Plates per side</span>
+                    <strong>{plateBreakdown.message}</strong>
+                    {!plateBreakdown.isLoadable && displayedWeight > 0 && (
+                      <small className="muted">
+                        Needs {Math.abs(plateBreakdown.remaining).toLocaleString()} lb more per side.
+                      </small>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {showLoadOptions && hasBaseWeightOption && (
+                <div className="load-helper">
+                  <label>
+                    <span>Starting weight</span>
+                    <input
+                      inputMode="decimal"
+                      min="0"
+                      placeholder="0"
+                      type="number"
+                      value={baseWeight}
+                      onChange={(event) => updateDraftField("baseWeight", event.target.value)}
+                    />
+                  </label>
+                  <div className="load-result">
+                    <span>Total working weight</span>
+                    <strong>{totalWorkingWeight.toLocaleString()} lbs</strong>
                     <small className="muted">
-                      Needs {Math.abs(plateBreakdown.remaining).toLocaleString()} lb more per side.
+                      Saved as {displayedWeight.toLocaleString()} + {effectiveBaseWeight.toLocaleString()}.
                     </small>
-                  )}
+                  </div>
                 </div>
-              </div>
-            )}
-
-            {showLoadOptions && hasBaseWeightOption && (
-              <div className="load-helper">
-                <label>
-                  <span>Starting weight</span>
-                  <input
-                    inputMode="decimal"
-                    min="0"
-                    placeholder="0"
-                    type="number"
-                    value={baseWeight}
-                    onChange={(event) => updateDraftField("baseWeight", event.target.value)}
-                  />
-                </label>
-                <div className="load-result">
-                  <span>Total working weight</span>
-                  <strong>{totalWorkingWeight.toLocaleString()} lbs</strong>
-                  <small className="muted">
-                    Saved as {displayedWeight.toLocaleString()} + {effectiveBaseWeight.toLocaleString()}.
-                  </small>
-                </div>
-              </div>
-            )}
+              )}
             </div>
 
             <div className="sets-grid">
